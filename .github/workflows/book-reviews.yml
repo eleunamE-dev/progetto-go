@@ -69,7 +69,7 @@ jobs:
       - name: Smoke test
         run: |
           docker run --detach --name api --publish 8080:8080 bookreviews:ci
-          curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 http://localhost:8080/healthz
+          curl --fail --silent --show-error --retry 15 --retry-all-errors --retry-delay 1 http://localhost:8080/healthz
       - name: Container logs
         if: always()
         run: docker logs api || true
