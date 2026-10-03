@@ -1,0 +1,6 @@
+# Keep the build context small: only sources are needed to build the image.
+bin/
+*.out
+*.test
+coverage.*
+.env

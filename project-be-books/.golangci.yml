@@ -1,0 +1,44 @@
+# golangci-lint v2 configuration: https://golangci-lint.run/usage/configuration/
+version: "2"
+
+linters:
+  # errcheck, govet, ineffassign, staticcheck and unused.
+  default: standard
+  enable:
+    - bodyclose # HTTP response bodies are closed
+    - errorlint # errors are compared with errors.Is/As and wrapped with %w
+    - exhaustive # switches over enum-like types handle every value
+    - gocritic # bugs, performance and style issues
+    - gosec # security issues
+    - misspell
+    - nilerr # returning nil where an error was meant
+    - noctx # HTTP requests and SQL queries carry a context
+    - revive # naming, documentation and style conventions
+    - rowserrcheck # sql.Rows.Err is checked
+    - sqlclosecheck # sql.Rows and sql.Stmt are closed
+    - testifylint # testify is used correctly
+    - thelper # test helpers call t.Helper
+    - unconvert # unnecessary conversions
+    - unparam # unused parameters and results
+    - usestdlibvars # http.MethodGet over "GET", and similar
+  settings:
+    gocritic:
+      enabled-tags: [diagnostic, performance, style]
+      disabled-checks:
+        - httpNoBody # a nil body is the documented idiom for httptest.NewRequest
+  exclusions:
+    presets:
+      - common-false-positives
+      - std-error-handling
+    rules:
+      # Tests build requests with httptest.NewRequest and use fixed inputs.
+      - path: _test\.go
+        linters: [gosec, noctx]
+
+formatters:
+  enable:
+    - gci # import groups: standard library, third party, this module
+    - gofumpt # a stricter gofmt
+  settings:
+    gci:
+      sections: [standard, default, localmodule]
