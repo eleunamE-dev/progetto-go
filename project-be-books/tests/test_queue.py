@@ -66,8 +66,11 @@ def test_attempt_counts_previous_rejections(x_death: object, expected: int) -> N
     assert attempt(FakeMessage(b"{}", headers), Topology()) == expected
 
 
-def test_retry_queue_name() -> None:
-    assert Topology(queue="reviews").retry_queue == "reviews.retry"
+def test_queue_names() -> None:
+    topology = Topology(queue="reviews")
+
+    assert topology.retry_queue == "reviews.retry"
+    assert topology.parking_queue == "reviews.parked"
 
 
 async def test_enqueue_reports_an_unreachable_broker() -> None:

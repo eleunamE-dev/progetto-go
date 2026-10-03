@@ -30,6 +30,7 @@ from bookreviews.review_service import (
 logger = logging.getLogger("bookreviews.enrichment")
 
 EXPECTED_ERRORS = (CatalogUnavailableError, SQLAlchemyError, OSError)
+SWEEP_BATCH_SIZE = 100
 
 
 class EnrichmentRepository(Protocol):
@@ -42,6 +43,12 @@ class EnrichmentRepository(Protocol):
     async def stale_pending(self, *, queued_before: datetime, limit: int) -> list[uuid.UUID]: ...
 
     async def mark_queued(self, review_ids: Sequence[uuid.UUID], at: datetime) -> None: ...
+
+    async def expire_pending(self, *, created_before: datetime, at: datetime) -> int: ...
+
+
+class Parking(Protocol):
+    async def park(self, body: bytes, reason: str) -> None: ...
 
 
 class Outcome(StrEnum):
@@ -75,10 +82,17 @@ class ReviewEnricher:
 
 
 class MessageHandler:
-    def __init__(self, enricher: ReviewEnricher, topology: Topology, max_attempts: int) -> None:
+    def __init__(
+        self,
+        enricher: ReviewEnricher,
+        topology: Topology,
+        max_attempts: int,
+        parking: Parking,
+    ) -> None:
         self._enricher = enricher
         self._topology = topology
         self._max_attempts = max_attempts
+        self._parking = parking
         self._active = 0
         self._idle = asyncio.Event()
         self._idle.set()
@@ -103,9 +117,8 @@ class MessageHandler:
     async def _handle(self, message: Delivery) -> None:
         try:
             review_id = decode(message)
-        except InvalidMessageError:
-            logger.exception("dropping a malformed message")
-            await message.ack()
+        except InvalidMessageError as invalid:
+            await self._park(message, str(invalid))
             return
 
         number = attempt(message, self._topology)
@@ -120,6 +133,22 @@ class MessageHandler:
         else:
             logger.info("review processed", extra=context | {"outcome": outcome.value})
             await message.ack()
+
+    async def _park(self, message: Delivery, reason: str) -> None:
+        try:
+            await self._parking.park(message.body, reason)
+        except QueueUnavailableError as exc:
+            logger.warning(
+                "could not park a malformed message, retrying later",
+                extra={"error": str(exc)},
+            )
+            await message.reject(requeue=False)
+            return
+        logger.error(
+            "malformed message parked",
+            extra={"queue": self._topology.parking_queue, "reason": reason},
+        )
+        await message.ack()
 
     async def _retry_or_give_up(
         self, message: Delivery, number: int, context: dict[str, object]
@@ -139,19 +168,22 @@ class Sweeper:
         queue: ReviewQueue,
         *,
         stale_after: float,
-        batch_size: int = 100,
+        deadline: float,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._reviews = reviews
         self._queue = queue
         self._stale_after = timedelta(seconds=stale_after)
-        self._batch_size = batch_size
+        self._deadline = timedelta(seconds=deadline)
         self._clock = clock
 
     async def sweep(self) -> int:
         now = self._clock()
+        expired = await self._reviews.expire_pending(created_before=now - self._deadline, at=now)
+        if expired:
+            logger.warning("gave up on reviews pending for too long", extra={"count": expired})
         stale = await self._reviews.stale_pending(
-            queued_before=now - self._stale_after, limit=self._batch_size
+            queued_before=now - self._stale_after, limit=SWEEP_BATCH_SIZE
         )
         queued: list[uuid.UUID] = []
         for review_id in stale:

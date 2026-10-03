@@ -76,3 +76,4 @@ async def topology(rabbitmq_url: str) -> AsyncIterator[Topology]:
         channel = await connection.channel()
         await channel.queue_delete(topology.queue)
         await channel.queue_delete(topology.retry_queue)
+        await channel.queue_delete(topology.parking_queue)

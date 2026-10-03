@@ -23,6 +23,7 @@ PRIDE_AND_PREJUDICE = Book(
     cover_url="https://www.gutenberg.org/cache/epub/1342/pg1342.cover.medium.jpg",
 )
 TOPOLOGY = Topology()
+DEADLINE = 86_400
 
 
 def new_review(**changes: Any) -> Review:
@@ -60,8 +61,13 @@ def enricher(repository: FakeReviewRepository, catalog: FakeCatalog) -> ReviewEn
 
 
 @pytest.fixture
-def handler(enricher: ReviewEnricher) -> MessageHandler:
-    return MessageHandler(enricher, TOPOLOGY, max_attempts=3)
+def parking() -> FakeQueue:
+    return FakeQueue()
+
+
+@pytest.fixture
+def handler(enricher: ReviewEnricher, parking: FakeQueue) -> MessageHandler:
+    return MessageHandler(enricher, TOPOLOGY, max_attempts=3, parking=parking)
 
 
 async def test_enrich_completes_a_pending_review(
@@ -208,17 +214,32 @@ async def test_handler_retries_unexpected_errors(
     assert "RuntimeError: bug" in record["exception"]
 
 
-async def test_handler_drops_malformed_messages(
-    handler: MessageHandler, json_logs: LogRecords
+async def test_handler_parks_malformed_messages(
+    handler: MessageHandler, parking: FakeQueue, json_logs: LogRecords
 ) -> None:
     message = FakeMessage(b"not json")
 
     await handler(message)
 
     assert message.acked
-    assert [r["msg"] for r in json_logs() if r["level"] == "ERROR"] == [
-        "dropping a malformed message"
-    ]
+    [(body, reason)] = parking.parked
+    assert body == b"not json"
+    assert reason.startswith("not an enrichment request")
+    [record] = [r for r in json_logs() if r["level"] == "ERROR"]
+    assert record["msg"] == "malformed message parked"
+    assert record["queue"] == "review.enrichment.parked"
+
+
+async def test_handler_retries_parking_later_when_rabbitmq_is_down(
+    handler: MessageHandler, parking: FakeQueue
+) -> None:
+    parking.accepted = 0
+    message = FakeMessage(b"not json")
+
+    await handler(message)
+
+    assert message.rejected
+    assert not message.acked
 
 
 async def test_drain_waits_for_messages_in_flight(
@@ -232,7 +253,9 @@ async def test_drain_waits_for_messages_in_flight(
             return await super().get_book(book_id)
 
     slow = SlowCatalog(books=catalog.books)
-    handler = MessageHandler(ReviewEnricher(repository, slow), TOPOLOGY, max_attempts=3)
+    handler = MessageHandler(
+        ReviewEnricher(repository, slow), TOPOLOGY, max_attempts=3, parking=FakeQueue()
+    )
     review = new_review()
     await repository.add(review)
     message = message_for(review.id)
@@ -258,7 +281,7 @@ async def test_sweep_queues_stale_pending_reviews_again(
     for review in (second, first, recent, done):
         await repository.add(review)
     queue = FakeQueue()
-    sweeper = Sweeper(repository, queue, stale_after=600, clock=lambda: NOW)
+    sweeper = Sweeper(repository, queue, stale_after=600, deadline=DEADLINE, clock=lambda: NOW)
 
     assert await sweeper.sweep() == 2
 
@@ -275,7 +298,9 @@ async def test_sweep_stops_when_the_queue_is_unavailable(
     first, second = new_review(created_at=old), new_review(created_at=old + timedelta(minutes=1))
     await repository.add(first)
     await repository.add(second)
-    sweeper = Sweeper(repository, FakeQueue(accepted=1), stale_after=600, clock=lambda: NOW)
+    sweeper = Sweeper(
+        repository, FakeQueue(accepted=1), stale_after=600, deadline=DEADLINE, clock=lambda: NOW
+    )
 
     assert await sweeper.sweep() == 1
 
@@ -294,7 +319,7 @@ async def test_sweeper_runs_until_stopped(repository: FakeReviewRepository) -> N
 
     queue = SignallingQueue()
     stop = asyncio.Event()
-    sweeper = Sweeper(repository, queue, stale_after=600, clock=lambda: NOW)
+    sweeper = Sweeper(repository, queue, stale_after=600, deadline=DEADLINE, clock=lambda: NOW)
 
     running = asyncio.create_task(sweeper.run(interval=0.01, stop=stop))
     await asyncio.wait_for(queued.wait(), timeout=1)
@@ -317,7 +342,9 @@ async def test_sweeper_survives_database_errors(json_logs: LogRecords) -> None:
             stop.set()
             return []
 
-    sweeper = Sweeper(FlakyRepository(), FakeQueue(), stale_after=600, clock=lambda: NOW)
+    sweeper = Sweeper(
+        FlakyRepository(), FakeQueue(), stale_after=600, deadline=DEADLINE, clock=lambda: NOW
+    )
 
     await asyncio.wait_for(sweeper.run(interval=0.01, stop=stop), timeout=1)
 
@@ -338,10 +365,31 @@ async def test_sweeper_survives_unexpected_errors(json_logs: LogRecords) -> None
             stop.set()
             return []
 
-    sweeper = Sweeper(BrokenRepository(), FakeQueue(), stale_after=600, clock=lambda: NOW)
+    sweeper = Sweeper(
+        BrokenRepository(), FakeQueue(), stale_after=600, deadline=DEADLINE, clock=lambda: NOW
+    )
 
     await asyncio.wait_for(sweeper.run(interval=0.01, stop=stop), timeout=1)
 
     assert calls == 2
     [record] = [r for r in json_logs() if r["msg"] == "unexpected error while sweeping"]
     assert "RuntimeError: Connection was not opened" in record["exception"]
+
+
+async def test_sweep_gives_up_on_reviews_pending_for_too_long(
+    repository: FakeReviewRepository, json_logs: LogRecords
+) -> None:
+    abandoned = new_review(created_at=NOW - timedelta(days=2))
+    recent = new_review(created_at=NOW - timedelta(hours=1))
+    await repository.add(abandoned)
+    await repository.add(recent)
+    queue = FakeQueue()
+    sweeper = Sweeper(repository, queue, stale_after=600, deadline=DEADLINE, clock=lambda: NOW)
+
+    await sweeper.sweep()
+
+    assert repository.reviews[abandoned.id].status is ReviewStatus.FAILED
+    assert repository.reviews[recent.id].status is ReviewStatus.PENDING
+    assert queue.enqueued == [recent.id]
+    [record] = [r for r in json_logs() if r["msg"] == "gave up on reviews pending for too long"]
+    assert record["count"] == 1

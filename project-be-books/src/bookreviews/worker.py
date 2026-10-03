@@ -7,12 +7,13 @@ from typing import Self
 
 import aio_pika
 
-from bookreviews.catalog import BookCatalog, CachedCatalog
+from bookreviews.catalog import BookCatalog
 from bookreviews.config import Settings
-from bookreviews.database import SqlReviewRepository, create_engine, create_sessions
+from bookreviews.database import SqlReviewRepository, create_sessions
 from bookreviews.enrichment import EnrichmentRepository, MessageHandler, ReviewEnricher, Sweeper
 from bookreviews.gutendex import GutendexClient
 from bookreviews.queue import CONNECT_TIMEOUT, RabbitQueue, Topology
+from bookreviews.wiring import build_catalog, build_engine
 
 logger = logging.getLogger("bookreviews.worker")
 
@@ -22,6 +23,7 @@ class WorkerOptions:
     topology: Topology = field(default_factory=Topology)
     concurrency: int = 4
     max_attempts: int = 5
+    deadline: float = 86_400
     sweep_interval: float = 60
     sweep_after: float = 600
     shutdown_timeout: float = 15
@@ -31,6 +33,7 @@ class WorkerOptions:
         return cls(
             concurrency=settings.worker_concurrency,
             max_attempts=settings.enrichment_max_attempts,
+            deadline=settings.enrichment_deadline,
             sweep_interval=settings.sweep_interval,
             sweep_after=settings.sweep_after,
             shutdown_timeout=settings.worker_shutdown_timeout,
@@ -46,8 +49,10 @@ async def consume(
 ) -> None:
     topology = options.topology
     queue = RabbitQueue(rabbitmq_url, topology)
-    handler = MessageHandler(ReviewEnricher(reviews, catalog), topology, options.max_attempts)
-    sweeper = Sweeper(reviews, queue, stale_after=options.sweep_after)
+    handler = MessageHandler(
+        ReviewEnricher(reviews, catalog), topology, options.max_attempts, parking=queue
+    )
+    sweeper = Sweeper(reviews, queue, stale_after=options.sweep_after, deadline=options.deadline)
     connection = await aio_pika.connect_robust(rabbitmq_url, timeout=CONNECT_TIMEOUT)
     try:
         channel = await connection.channel()
@@ -70,7 +75,7 @@ async def consume(
 
 
 async def serve(settings: Settings, stop: asyncio.Event) -> None:
-    engine = create_engine(settings.database_url.get_secret_value())
+    engine = build_engine(settings)
     try:
         async with GutendexClient(
             str(settings.gutendex_base_url), settings.gutendex_timeout
@@ -78,9 +83,7 @@ async def serve(settings: Settings, stop: asyncio.Event) -> None:
             await consume(
                 settings.rabbitmq_url.get_secret_value(),
                 SqlReviewRepository(create_sessions(engine)),
-                CachedCatalog(
-                    gutendex, ttl=settings.catalog_cache_ttl, max_books=settings.catalog_cache_size
-                ),
+                build_catalog(gutendex, settings),
                 stop,
                 WorkerOptions.from_settings(settings),
             )

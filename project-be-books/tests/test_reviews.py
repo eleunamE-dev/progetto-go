@@ -8,8 +8,9 @@ from fastapi import FastAPI, Request
 
 from bookreviews.app import create_app
 from bookreviews.books import get_catalog
-from bookreviews.catalog import Book, CatalogTimeoutError, Person
+from bookreviews.catalog import Book, CatalogCircuitOpenError, CatalogTimeoutError, Person
 from bookreviews.config import Settings
+from bookreviews.database import SqlReviewRepository, create_engine, create_sessions
 from bookreviews.review_service import Review, ReviewStatus
 from bookreviews.reviews import get_review_queue, get_review_repository
 from tests.fakes import FakeCatalog, FakeQueue, FakeReviewRepository
@@ -177,6 +178,34 @@ async def test_submit_when_the_catalog_does_not_answer(
     assert repository.reviews == {}
 
 
+async def test_submit_while_the_catalog_is_suspended(
+    client: httpx.AsyncClient, catalog: FakeCatalog, repository: FakeReviewRepository
+) -> None:
+    catalog.error = CatalogCircuitOpenError(20)
+
+    response = await client.post("/review", json=VALID)
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "20"
+    assert repository.reviews == {}
+
+
+async def test_reviews_are_unavailable_while_the_database_is_down(
+    app: FastAPI, client: httpx.AsyncClient
+) -> None:
+    engine = create_engine("mysql+aiomysql://user:password@127.0.0.1:9/bookreviews")
+    repository = SqlReviewRepository(create_sessions(engine))
+    app.dependency_overrides[get_review_repository] = lambda: repository
+    try:
+        response = await client.get(f"/review/{uuid.uuid7()}")
+    finally:
+        await engine.dispose()
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "5"
+    assert response.json()["detail"] == "the database is not available, try again later"
+
+
 async def test_get_pending_review(
     client: httpx.AsyncClient, repository: FakeReviewRepository
 ) -> None:
@@ -322,7 +351,8 @@ async def test_reviews_are_documented(client: httpx.AsyncClient) -> None:
 
     assert set(paths["/review"]) == {"post"}
     assert set(paths["/review/{review_id}"]) == {"get", "put", "delete"}
-    assert {"200", "202", "404"} <= paths["/review/{review_id}"]["get"]["responses"].keys()
+    assert {"200", "202", "404", "503"} <= paths["/review/{review_id}"]["get"]["responses"].keys()
+    assert "503" in paths["/review"]["post"]["responses"]
 
 
 def test_get_review_repository_reads_the_application_state() -> None:

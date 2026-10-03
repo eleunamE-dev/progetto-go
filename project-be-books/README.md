@@ -118,13 +118,16 @@ curl -X DELETE localhost:8080/review/01a1023f-006d-716b-abee-f6d3e9210156
 
 | Endpoint | Success | Errors |
 |---|---|---|
-| `GET /book/search?q={keywords}&page={n}` | 200 | 422 invalid parameters, 404 page past the end, 502/504 Gutendex |
-| `POST /review` | 202 and `Location` | 422 invalid body or unknown book, 502/504 Gutendex |
-| `GET /review/{id}` | 202 while `pending`, 200 once `completed` or `failed` | 404, 422 malformed ID |
-| `PUT /review/{id}` | 200 | 404, 422 |
-| `DELETE /review/{id}` | 204 | 404, 422 malformed ID |
+| `GET /book/search?q={keywords}&page={n}` | 200 | 422 invalid parameters, 404 page past the end, 502/503/504 Gutendex |
+| `POST /review` | 202 and `Location` | 422 invalid body or unknown book, 502/503/504 Gutendex, 503 database |
+| `GET /review/{id}` | 202 while `pending`, 200 once `completed` or `failed` | 404, 422 malformed ID, 503 database |
+| `PUT /review/{id}` | 200 | 404, 422, 503 database |
+| `DELETE /review/{id}` | 204 | 404, 422 malformed ID, 503 database |
 | `GET /healthz` | 200: the process is up | |
 | `GET /readyz` | 200: the database is reachable | 503 |
+
+A 503 carries `Retry-After`: the database is unreachable, or calls to Gutendex are suspended after
+repeated failures or because too many are already in progress.
 
 **Search.** `q` holds the words to look for in titles and author names (at most 200 characters);
 results come 32 per page, the most downloaded first.
@@ -183,8 +186,9 @@ src/bookreviews/
 ├── books.py            GET /book/search
 ├── reviews.py          /review endpoints and their schemas
 ├── review_service.py   review model and rules
-├── catalog.py          book types, BookCatalog protocol, in-memory cache
+├── catalog.py          book types, BookCatalog protocol, in-memory cache, circuit breaker
 ├── gutendex.py         Gutendex client
+├── wiring.py           database engine and catalog built from the settings
 ├── database.py         SQLAlchemy models and repository
 ├── migrations/         Alembic migrations
 ├── queue.py            RabbitMQ topology and publisher
@@ -220,6 +224,14 @@ The design follows from that:
 - **Fast validation.** Books seen in search results stay in memory (TTL and LRU). Reviewing a book
   just found doesn't wait for Gutendex: about 10 ms instead of up to 40 s.
 - **Async.** The API is asynchronous end to end: a request waiting on Gutendex holds no thread.
+- **Circuit breaker.** After 5 consecutive failures (timeouts, 5xx, connection errors), calls to
+  Gutendex are suspended for 30 s and requests that need it get a 503 with `Retry-After` at once,
+  instead of piling up for a minute each. Then a single probe goes through: it closes the circuit if
+  it succeeds and suspends calls again if it fails. "No such book" is an answer, not a failure, and
+  cached books are still served while the circuit is open.
+- **Bulkhead.** Each process makes at most 8 calls to Gutendex at a time. A request that waits more
+  than 10 s for a free slot gets a 503, so a slow Gutendex can't exhaust the API's connections and
+  memory.
 
 ### Asynchronous enrichment
 
@@ -235,6 +247,11 @@ The design follows from that:
   reviews still pending 10 minutes after they were last queued. That covers RabbitMQ being down when
   the review was submitted (the review is saved and accepted anyway) and reviews whose attempts ran
   out. An outage delays the enrichment; it doesn't lose it.
+- **Deadline.** A review still pending 24 hours after it was submitted is marked `failed`, so a book
+  that Gutendex can never serve doesn't keep the sweeper busy forever.
+- **Malformed messages.** A message that isn't an enrichment request is moved to the
+  `review.enrichment.parked` queue, with the reason in its `x-parked-reason` header, to be inspected
+  rather than lost.
 - **No lost updates.** The worker only changes the status and the book data, so a `PUT` running at
   the same time keeps its text and score.
 - **Shutdown.** On SIGTERM the worker stops consuming, lets the messages in progress finish, and
@@ -250,6 +267,9 @@ The design follows from that:
   stored in MariaDB's native `UUID` type.
 - **Storage formats.** Timestamps are stored in UTC with microseconds, text as utf8mb4.
 - **Book data.** It lives in a `books` table shared by the reviews of the same book.
+- **Connection pool.** Each process keeps up to 5 connections, plus 10 more under load. A request
+  waits at most 10 s for a free one. Connections are checked before use and replaced after 30
+  minutes. While the database is unreachable the API answers 503 with `Retry-After`.
 
 ### API conventions
 
@@ -271,7 +291,6 @@ The design follows from that:
 - A cache shared by several API instances (e.g. Redis).
 - Coordination between the sweepers of several workers (`FOR UPDATE SKIP LOCKED`); today they may
   queue the same review twice, which is harmless.
-- Giving up on reviews that stay pending for days.
 
 ## Configuration
 
@@ -284,13 +303,21 @@ Every setting has a default that works with the Compose services on `localhost`.
 | `HTTP_PORT` | `8080` | API |
 | `HTTP_SHUTDOWN_TIMEOUT` | `15` | seconds left to running requests on shutdown |
 | `DATABASE_URL` | `mysql+aiomysql://user:password@localhost:3306/bookreviews` | |
+| `DATABASE_POOL_SIZE` | `5` | connections each process keeps open |
+| `DATABASE_MAX_OVERFLOW` | `10` | extra connections opened under load |
+| `DATABASE_POOL_TIMEOUT` | `10` | seconds a request waits for a free connection |
 | `RABBITMQ_URL` | `amqp://user:password@localhost:5672/` | |
 | `GUTENDEX_BASE_URL` | `https://gutendex.com` | |
 | `GUTENDEX_TIMEOUT` | `60` | seconds |
+| `GUTENDEX_MAX_CONCURRENCY` | `8` | calls to Gutendex in progress at the same time, per process |
+| `GUTENDEX_QUEUE_TIMEOUT` | `10` | seconds a call waits for a free slot before a 503 |
+| `GUTENDEX_FAILURE_THRESHOLD` | `5` | consecutive failures that suspend calls to Gutendex |
+| `GUTENDEX_RESET_TIMEOUT` | `30` | seconds calls stay suspended before a probe |
 | `CATALOG_CACHE_TTL` | `3600` | seconds a book stays in the in-memory cache |
 | `CATALOG_CACHE_SIZE` | `10000` | books kept in the in-memory cache |
 | `WORKER_CONCURRENCY` | `4` | messages processed at the same time |
 | `ENRICHMENT_MAX_ATTEMPTS` | `5` | attempts before leaving a review to the sweeper |
+| `ENRICHMENT_DEADLINE` | `86400` | seconds after which a pending review is marked `failed`; must exceed `SWEEP_AFTER` |
 | `SWEEP_INTERVAL` | `60` | seconds between two sweeps |
 | `SWEEP_AFTER` | `600` | seconds after which a pending review is queued again |
 | `WORKER_SHUTDOWN_TIMEOUT` | `15` | seconds left to running messages on shutdown |

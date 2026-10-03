@@ -9,13 +9,21 @@ VARIABLES = (
     "HTTP_PORT",
     "HTTP_SHUTDOWN_TIMEOUT",
     "DATABASE_URL",
+    "DATABASE_POOL_SIZE",
+    "DATABASE_MAX_OVERFLOW",
+    "DATABASE_POOL_TIMEOUT",
     "GUTENDEX_BASE_URL",
     "GUTENDEX_TIMEOUT",
+    "GUTENDEX_MAX_CONCURRENCY",
+    "GUTENDEX_QUEUE_TIMEOUT",
+    "GUTENDEX_FAILURE_THRESHOLD",
+    "GUTENDEX_RESET_TIMEOUT",
     "CATALOG_CACHE_TTL",
     "CATALOG_CACHE_SIZE",
     "RABBITMQ_URL",
     "WORKER_CONCURRENCY",
     "ENRICHMENT_MAX_ATTEMPTS",
+    "ENRICHMENT_DEADLINE",
     "SWEEP_INTERVAL",
     "SWEEP_AFTER",
     "WORKER_SHUTDOWN_TIMEOUT",
@@ -38,13 +46,21 @@ def test_defaults_need_no_configuration() -> None:
     assert settings.database_url.get_secret_value() == (
         "mysql+aiomysql://user:password@localhost:3306/bookreviews"
     )
+    assert settings.database_pool_size == 5
+    assert settings.database_max_overflow == 10
+    assert settings.database_pool_timeout == 10
     assert str(settings.gutendex_base_url) == "https://gutendex.com/"
     assert settings.gutendex_timeout == 60
+    assert settings.gutendex_max_concurrency == 8
+    assert settings.gutendex_queue_timeout == 10
+    assert settings.gutendex_failure_threshold == 5
+    assert settings.gutendex_reset_timeout == 30
     assert settings.catalog_cache_ttl == 3600
     assert settings.catalog_cache_size == 10_000
     assert settings.rabbitmq_url.get_secret_value() == "amqp://user:password@localhost:5672/"
     assert settings.worker_concurrency == 4
     assert settings.enrichment_max_attempts == 5
+    assert settings.enrichment_deadline == 86_400
     assert settings.sweep_interval == 60
     assert settings.sweep_after == 600
     assert settings.worker_shutdown_timeout == 15
@@ -56,13 +72,21 @@ def test_environment_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("HTTP_PORT", "9090")
     monkeypatch.setenv("HTTP_SHUTDOWN_TIMEOUT", "30")
     monkeypatch.setenv("DATABASE_URL", "mysql+aiomysql://app:secret@db:3306/reviews")
+    monkeypatch.setenv("DATABASE_POOL_SIZE", "20")
+    monkeypatch.setenv("DATABASE_MAX_OVERFLOW", "0")
+    monkeypatch.setenv("DATABASE_POOL_TIMEOUT", "2.5")
     monkeypatch.setenv("GUTENDEX_BASE_URL", "http://localhost:8000")
     monkeypatch.setenv("GUTENDEX_TIMEOUT", "2.5")
+    monkeypatch.setenv("GUTENDEX_MAX_CONCURRENCY", "2")
+    monkeypatch.setenv("GUTENDEX_QUEUE_TIMEOUT", "1.5")
+    monkeypatch.setenv("GUTENDEX_FAILURE_THRESHOLD", "3")
+    monkeypatch.setenv("GUTENDEX_RESET_TIMEOUT", "120")
     monkeypatch.setenv("CATALOG_CACHE_TTL", "60")
     monkeypatch.setenv("CATALOG_CACHE_SIZE", "100")
     monkeypatch.setenv("RABBITMQ_URL", "amqp://app:secret@broker:5672/")
     monkeypatch.setenv("WORKER_CONCURRENCY", "8")
     monkeypatch.setenv("ENRICHMENT_MAX_ATTEMPTS", "3")
+    monkeypatch.setenv("ENRICHMENT_DEADLINE", "3600")
     monkeypatch.setenv("SWEEP_INTERVAL", "30")
     monkeypatch.setenv("SWEEP_AFTER", "120")
     monkeypatch.setenv("WORKER_SHUTDOWN_TIMEOUT", "5")
@@ -74,13 +98,21 @@ def test_environment_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.http_port == 9090
     assert settings.http_shutdown_timeout == 30
     assert settings.database_url.get_secret_value() == "mysql+aiomysql://app:secret@db:3306/reviews"
+    assert settings.database_pool_size == 20
+    assert settings.database_max_overflow == 0
+    assert settings.database_pool_timeout == 2.5
     assert str(settings.gutendex_base_url) == "http://localhost:8000/"
     assert settings.gutendex_timeout == 2.5
+    assert settings.gutendex_max_concurrency == 2
+    assert settings.gutendex_queue_timeout == 1.5
+    assert settings.gutendex_failure_threshold == 3
+    assert settings.gutendex_reset_timeout == 120
     assert settings.catalog_cache_ttl == 60
     assert settings.catalog_cache_size == 100
     assert settings.rabbitmq_url.get_secret_value() == "amqp://app:secret@broker:5672/"
     assert settings.worker_concurrency == 8
     assert settings.enrichment_max_attempts == 3
+    assert settings.enrichment_deadline == 3600
     assert settings.sweep_interval == 30
     assert settings.sweep_after == 120
     assert settings.worker_shutdown_timeout == 5
@@ -100,12 +132,20 @@ def test_connection_urls_stay_out_of_logs(monkeypatch: pytest.MonkeyPatch) -> No
         ("HTTP_PORT", "http"),
         ("HTTP_PORT", "0"),
         ("HTTP_SHUTDOWN_TIMEOUT", "0"),
+        ("DATABASE_POOL_SIZE", "0"),
+        ("DATABASE_MAX_OVERFLOW", "-1"),
+        ("DATABASE_POOL_TIMEOUT", "0"),
         ("GUTENDEX_BASE_URL", "gutendex.com"),
         ("GUTENDEX_TIMEOUT", "-1"),
+        ("GUTENDEX_MAX_CONCURRENCY", "0"),
+        ("GUTENDEX_QUEUE_TIMEOUT", "0"),
+        ("GUTENDEX_FAILURE_THRESHOLD", "0"),
+        ("GUTENDEX_RESET_TIMEOUT", "0"),
         ("CATALOG_CACHE_TTL", "0"),
         ("CATALOG_CACHE_SIZE", "0"),
         ("WORKER_CONCURRENCY", "0"),
         ("ENRICHMENT_MAX_ATTEMPTS", "0"),
+        ("ENRICHMENT_DEADLINE", "0"),
         ("SWEEP_INTERVAL", "0"),
         ("SWEEP_AFTER", "0"),
         ("WORKER_SHUTDOWN_TIMEOUT", "0"),
@@ -117,4 +157,14 @@ def test_invalid_values_are_rejected(
     monkeypatch.setenv(name, value)
 
     with pytest.raises(ValidationError, match=name.lower()):
+        Settings()
+
+
+def test_the_enrichment_deadline_must_outlast_the_sweeps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SWEEP_AFTER", "600")
+    monkeypatch.setenv("ENRICHMENT_DEADLINE", "600")
+
+    with pytest.raises(ValidationError, match="must be longer than sweep_after"):
         Settings()

@@ -26,7 +26,12 @@ class Topology:
     def retry_queue(self) -> str:
         return f"{self.queue}.retry"
 
+    @property
+    def parking_queue(self) -> str:
+        return f"{self.queue}.parked"
+
     async def declare(self, channel: AbstractChannel) -> AbstractQueue:
+        await channel.declare_queue(self.parking_queue, durable=True)
         await channel.declare_queue(
             self.retry_queue,
             durable=True,
@@ -112,10 +117,21 @@ class RabbitQueue:
         self._lock = asyncio.Lock()
 
     async def enqueue(self, review_id: uuid.UUID) -> None:
+        await self._publish(encode(review_id), self._topology.queue)
+
+    async def park(self, body: bytes, reason: str) -> None:
+        message = aio_pika.Message(
+            body,
+            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+            headers={"x-parked-reason": reason[:500]},
+        )
+        await self._publish(message, self._topology.parking_queue)
+
+    async def _publish(self, message: aio_pika.Message, routing_key: str) -> None:
         try:
             channel = await self._open_channel()
             await channel.default_exchange.publish(
-                encode(review_id), routing_key=self._topology.queue, timeout=PUBLISH_TIMEOUT
+                message, routing_key=routing_key, timeout=PUBLISH_TIMEOUT
             )
         except (*CONNECTION_EXCEPTIONS, AMQPException, TimeoutError) as exc:
             raise QueueUnavailableError(f"could not publish to RabbitMQ: {exc!r}") from exc
