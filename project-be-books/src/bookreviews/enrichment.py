@@ -174,5 +174,7 @@ class Sweeper:
                 await self.sweep()
             except EXPECTED_ERRORS as exc:
                 logger.warning("sweep failed", extra={"error": str(exc)})
+            except Exception:
+                logger.exception("unexpected error while sweeping")
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), interval)

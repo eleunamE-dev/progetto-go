@@ -77,3 +77,26 @@ async def test_enqueue_reports_an_unreachable_broker() -> None:
         await queue.enqueue(uuid.uuid7())
 
     await queue.close()
+
+
+class ReconnectingConnection:
+    is_closed = False
+
+    async def channel(self) -> None:
+        raise RuntimeError("Connection was not opened")
+
+    async def close(self) -> None:
+        pass
+
+
+async def test_enqueue_reports_a_broker_that_is_reconnecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def connect_robust(*args: object, **kwargs: object) -> ReconnectingConnection:
+        return ReconnectingConnection()
+
+    monkeypatch.setattr(aio_pika, "connect_robust", connect_robust)
+    queue = RabbitQueue("amqp://user:password@rabbitmq:5672/")
+
+    with pytest.raises(QueueUnavailableError, match="Connection was not opened"):
+        await queue.enqueue(uuid.uuid7())

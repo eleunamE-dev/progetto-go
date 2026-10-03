@@ -323,3 +323,25 @@ async def test_sweeper_survives_database_errors(json_logs: LogRecords) -> None:
 
     assert calls == 2
     assert [r["msg"] for r in json_logs() if r["level"] == "WARNING"] == ["sweep failed"]
+
+
+async def test_sweeper_survives_unexpected_errors(json_logs: LogRecords) -> None:
+    calls = 0
+    stop = asyncio.Event()
+
+    class BrokenRepository(FakeReviewRepository):
+        async def stale_pending(self, *, queued_before: datetime, limit: int) -> list[uuid.UUID]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("Connection was not opened")
+            stop.set()
+            return []
+
+    sweeper = Sweeper(BrokenRepository(), FakeQueue(), stale_after=600, clock=lambda: NOW)
+
+    await asyncio.wait_for(sweeper.run(interval=0.01, stop=stop), timeout=1)
+
+    assert calls == 2
+    [record] = [r for r in json_logs() if r["msg"] == "unexpected error while sweeping"]
+    assert "RuntimeError: Connection was not opened" in record["exception"]
