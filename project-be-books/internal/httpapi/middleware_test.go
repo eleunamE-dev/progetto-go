@@ -15,7 +15,6 @@ import (
 	"github.com/eleunamE-dev/progetto-go/project-be-books/internal/logging"
 )
 
-// withMiddleware wraps h in the same middleware chain NewServer uses.
 func withMiddleware(logger *slog.Logger, h http.Handler) http.Handler {
 	return withRequestID(logRequests(logger)(recoverPanics(logger)(h)))
 }

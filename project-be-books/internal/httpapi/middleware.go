@@ -19,16 +19,11 @@ const (
 
 type requestIDKey struct{}
 
-// requestIDFrom returns the ID that withRequestID assigned to the request.
 func requestIDFrom(ctx context.Context) string {
 	id, _ := ctx.Value(requestIDKey{}).(string)
 	return id
 }
 
-// withRequestID tags every request with an ID: the caller's X-Request-ID when
-// it looks sane, so a request can be followed across services, or a random one
-// otherwise. The ID is echoed in the response and added to every log record of
-// the request.
 func withRequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(requestIDHeader)
@@ -43,8 +38,6 @@ func withRequestID(next http.Handler) http.Handler {
 	})
 }
 
-// isValidRequestID accepts short IDs made of URL-safe characters only, so a
-// caller cannot inject arbitrary content into our logs.
 func isValidRequestID(id string) bool {
 	if id == "" || len(id) > maxRequestIDLength {
 		return false
@@ -59,7 +52,6 @@ func isValidRequestID(id string) bool {
 	return true
 }
 
-// logRequests writes an access log record for every request.
 func logRequests(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +73,6 @@ func logRequests(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// statusRecorder remembers the status code sent by the handlers it wraps.
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
@@ -101,8 +92,6 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	return r.ResponseWriter.Write(b)
 }
 
-// Status returns the status code sent to the client: like net/http, it
-// defaults to 200 when the handler wrote nothing.
 func (r *statusRecorder) Status() int {
 	if r.status == 0 {
 		return http.StatusOK
@@ -110,13 +99,10 @@ func (r *statusRecorder) Status() int {
 	return r.status
 }
 
-// Unwrap gives http.ResponseController access to the wrapped writer.
 func (r *statusRecorder) Unwrap() http.ResponseWriter {
 	return r.ResponseWriter
 }
 
-// recoverPanics turns a panic in a handler into a 500 problem response and an
-// error log with the stack trace, instead of a dropped connection.
 func recoverPanics(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +112,7 @@ func recoverPanics(logger *slog.Logger) func(http.Handler) http.Handler {
 					return
 				}
 				if err, ok := v.(error); ok && errors.Is(err, http.ErrAbortHandler) {
-					panic(v) // net/http's way to abort a response on purpose
+					panic(v)
 				}
 				logger.ErrorContext(r.Context(), "panic serving request",
 					slog.Any("panic", v),

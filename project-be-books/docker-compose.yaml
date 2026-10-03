@@ -39,8 +39,6 @@ services:
       LOG_LEVEL: info
     ports:
       - "8080:8080"
-    # Longer than HTTP_SHUTDOWN_TIMEOUT (15s), so in-flight requests can
-    # finish before Docker resorts to SIGKILL.
     stop_grace_period: 20s
     restart: unless-stopped
 

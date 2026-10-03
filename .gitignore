@@ -1,14 +1,9 @@
-# Build output and test artifacts
 bin/
 *.exe
 *.test
 *.out
 coverage.*
-
-# Local environment overrides
 .env
-
-# Editors and operating systems
 .idea/
 .vscode/
 .DS_Store

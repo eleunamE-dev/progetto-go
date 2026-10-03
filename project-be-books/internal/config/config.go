@@ -1,8 +1,4 @@
 // Package config loads the service configuration from environment variables.
-//
-// Every setting has a default suited to local development, so the service
-// starts with no configuration at all, and each one can be overridden per
-// environment (twelve-factor style).
 package config
 
 import (
@@ -27,9 +23,7 @@ type HTTP struct {
 	ReadTimeout       time.Duration `env:"READ_TIMEOUT" envDefault:"10s"`
 	WriteTimeout      time.Duration `env:"WRITE_TIMEOUT" envDefault:"30s"`
 	IdleTimeout       time.Duration `env:"IDLE_TIMEOUT" envDefault:"120s"`
-	// ShutdownTimeout bounds how long in-flight requests may take to finish
-	// once a termination signal arrives.
-	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"15s"`
+	ShutdownTimeout   time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"15s"`
 }
 
 // Load reads the configuration from the process environment.
@@ -37,8 +31,7 @@ func Load() (Config, error) {
 	return LoadFrom(env.ToMap(os.Environ()))
 }
 
-// LoadFrom reads the configuration from the given variables, so tests do not
-// depend on the environment of the machine running them.
+// LoadFrom reads the configuration from the given variables.
 func LoadFrom(environ map[string]string) (Config, error) {
 	cfg, err := env.ParseAsWithOptions[Config](env.Options{Environment: environ})
 	if err != nil {

@@ -26,8 +26,6 @@ func main() {
 	}
 }
 
-// run starts the API server and blocks until ctx is cancelled, then shuts the
-// server down gracefully, letting in-flight requests complete.
 func run(ctx context.Context) error {
 	cfg, err := config.Load()
 	if err != nil {

@@ -16,7 +16,6 @@ import (
 	"github.com/eleunamE-dev/progetto-go/project-be-books/internal/logging"
 )
 
-// problem mirrors the RFC 9457 documents returned by the API on errors.
 type problem struct {
 	Title     string `json:"title"`
 	Status    int    `json:"status"`

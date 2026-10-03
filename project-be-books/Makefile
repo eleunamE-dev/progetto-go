@@ -1,8 +1,4 @@
-# Development tasks for the book review service. Run `make` to list them.
-
 GOLANGCI_LINT_VERSION ?= v2.14.0
-# golangci-lint runs in Docker so everyone uses the same version; set
-# GOLANGCI_LINT=golangci-lint to use a local installation instead.
 GOLANGCI_LINT ?= docker run --rm -v "$(CURDIR)":/app -w /app \
 	-v bookreviews-golangci-cache:/root/.cache -v bookreviews-gomod-cache:/go/pkg/mod \
 	golangci/golangci-lint:$(GOLANGCI_LINT_VERSION) golangci-lint
