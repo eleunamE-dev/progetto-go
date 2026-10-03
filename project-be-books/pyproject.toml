@@ -1,0 +1,61 @@
+[project]
+name = "bookreviews"
+version = "0.1.0"
+description = "Book review service backed by the Gutendex catalog"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.142",
+    "pydantic-settings>=2.15",
+    "uvicorn[standard]>=0.54",
+]
+
+[project.scripts]
+bookreviews-api = "bookreviews.main:run_api"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28",
+    "mypy>=2.4",
+    "pre-commit>=4.6",
+    "pytest>=9.1",
+    "pytest-asyncio>=1.4",
+    "pytest-cov>=7.1",
+    "ruff>=0.16",
+]
+
+[build-system]
+requires = ["uv_build>=0.11,<0.13"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "RET", "ARG", "PTH", "ERA",
+    "S", "ASYNC", "DTZ", "LOG", "G", "T20", "PT", "TRY", "PERF", "PL", "FAST", "RUF",
+]
+ignore = ["TRY003"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PLR2004"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = ["--strict-markers", "--strict-config"]
+
+[tool.coverage.run]
+source = ["bookreviews"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
