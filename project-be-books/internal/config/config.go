@@ -14,6 +14,7 @@ import (
 type Config struct {
 	LogLevel slog.Level `env:"LOG_LEVEL" envDefault:"info"`
 	HTTP     HTTP       `envPrefix:"HTTP_"`
+	Gutendex Gutendex   `envPrefix:"GUTENDEX_"`
 }
 
 // HTTP configures the HTTP server.
@@ -21,9 +22,15 @@ type HTTP struct {
 	Addr              string        `env:"ADDR" envDefault:":8080"`
 	ReadHeaderTimeout time.Duration `env:"READ_HEADER_TIMEOUT" envDefault:"5s"`
 	ReadTimeout       time.Duration `env:"READ_TIMEOUT" envDefault:"10s"`
-	WriteTimeout      time.Duration `env:"WRITE_TIMEOUT" envDefault:"30s"`
+	WriteTimeout      time.Duration `env:"WRITE_TIMEOUT" envDefault:"75s"`
 	IdleTimeout       time.Duration `env:"IDLE_TIMEOUT" envDefault:"120s"`
 	ShutdownTimeout   time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"15s"`
+}
+
+// Gutendex configures the client of the Gutendex API.
+type Gutendex struct {
+	BaseURL string        `env:"BASE_URL" envDefault:"https://gutendex.com"`
+	Timeout time.Duration `env:"TIMEOUT" envDefault:"60s"`
 }
 
 // Load reads the configuration from the process environment.

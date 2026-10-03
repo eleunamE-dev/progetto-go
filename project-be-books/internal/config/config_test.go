@@ -25,10 +25,15 @@ func TestLoadFrom(t *testing.T) {
 			Addr:              ":8080",
 			ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout:       10 * time.Second,
-			WriteTimeout:      30 * time.Second,
+			WriteTimeout:      75 * time.Second,
 			IdleTimeout:       120 * time.Second,
 			ShutdownTimeout:   15 * time.Second,
 		}, cfg.HTTP)
+		assert.Equal(t, config.Gutendex{
+			BaseURL: "https://gutendex.com",
+			Timeout: 60 * time.Second,
+		}, cfg.Gutendex)
+		assert.Less(t, cfg.Gutendex.Timeout, cfg.HTTP.WriteTimeout, "a slow catalog answer still fits in the response")
 	})
 
 	t.Run("environment overrides defaults", func(t *testing.T) {
@@ -38,6 +43,8 @@ func TestLoadFrom(t *testing.T) {
 			"LOG_LEVEL":          "debug",
 			"HTTP_ADDR":          "127.0.0.1:9090",
 			"HTTP_WRITE_TIMEOUT": "45s",
+			"GUTENDEX_BASE_URL":  "http://localhost:8000",
+			"GUTENDEX_TIMEOUT":   "5s",
 		})
 
 		require.NoError(t, err)
@@ -45,6 +52,7 @@ func TestLoadFrom(t *testing.T) {
 		assert.Equal(t, "127.0.0.1:9090", cfg.HTTP.Addr)
 		assert.Equal(t, 45*time.Second, cfg.HTTP.WriteTimeout)
 		assert.Equal(t, 5*time.Second, cfg.HTTP.ReadHeaderTimeout, "unset values keep their default")
+		assert.Equal(t, config.Gutendex{BaseURL: "http://localhost:8000", Timeout: 5 * time.Second}, cfg.Gutendex)
 	})
 
 	t.Run("empty values fall back to defaults", func(t *testing.T) {

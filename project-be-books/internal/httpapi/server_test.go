@@ -24,10 +24,10 @@ type problem struct {
 	RequestID string `json:"request_id"`
 }
 
-func newServer(t *testing.T) (http.Handler, *bytes.Buffer) {
+func newServer(t *testing.T, books httpapi.BookSearcher) (http.Handler, *bytes.Buffer) {
 	t.Helper()
 	var logs bytes.Buffer
-	return httpapi.NewServer(logging.New(&logs, slog.LevelDebug)), &logs
+	return httpapi.NewServer(logging.New(&logs, slog.LevelDebug), books), &logs
 }
 
 func serve(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
@@ -43,9 +43,22 @@ func decode[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 	return v
 }
 
+func findLog(t *testing.T, logs *bytes.Buffer, msg string) map[string]any {
+	t.Helper()
+	for line := range strings.Lines(logs.String()) {
+		var record map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &record), "log line: %s", line)
+		if record["msg"] == msg {
+			return record
+		}
+	}
+	t.Fatalf("no %q record in logs:\n%s", msg, logs)
+	return nil
+}
+
 func TestHealthz(t *testing.T) {
 	t.Parallel()
-	srv, _ := newServer(t)
+	srv, _ := newServer(t, &fakeSearcher{})
 
 	rec := serve(srv, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 
@@ -70,7 +83,7 @@ func TestRoutingErrorsAreProblemDocuments(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			srv, _ := newServer(t)
+			srv, _ := newServer(t, &fakeSearcher{})
 
 			rec := serve(srv, httptest.NewRequest(tt.method, tt.target, nil))
 
@@ -89,7 +102,7 @@ func TestRoutingErrorsAreProblemDocuments(t *testing.T) {
 
 func TestPathCleaningRedirectIsKept(t *testing.T) {
 	t.Parallel()
-	srv, _ := newServer(t)
+	srv, _ := newServer(t, &fakeSearcher{})
 
 	rec := serve(srv, httptest.NewRequest(http.MethodGet, "/a/../nope", nil))
 
@@ -103,7 +116,7 @@ func TestRequestID(t *testing.T) {
 
 	t.Run("generated when the caller sends none", func(t *testing.T) {
 		t.Parallel()
-		srv, _ := newServer(t)
+		srv, _ := newServer(t, &fakeSearcher{})
 
 		rec := serve(srv, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 
@@ -112,7 +125,7 @@ func TestRequestID(t *testing.T) {
 
 	t.Run("caller's ID is kept", func(t *testing.T) {
 		t.Parallel()
-		srv, _ := newServer(t)
+		srv, _ := newServer(t, &fakeSearcher{})
 		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 		req.Header.Set("X-Request-ID", "req-42.retry_1")
 
@@ -127,7 +140,7 @@ func TestRequestID(t *testing.T) {
 	} {
 		t.Run("caller's ID "+name+" is replaced", func(t *testing.T) {
 			t.Parallel()
-			srv, _ := newServer(t)
+			srv, _ := newServer(t, &fakeSearcher{})
 			req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 			req.Header.Set("X-Request-ID", id)
 
@@ -142,7 +155,7 @@ func TestRequestID(t *testing.T) {
 
 func TestAccessLog(t *testing.T) {
 	t.Parallel()
-	srv, logs := newServer(t)
+	srv, logs := newServer(t, &fakeSearcher{})
 	req := httptest.NewRequest(http.MethodGet, "/healthz?verbose=1", nil)
 	req.Header.Set("X-Request-ID", "req-42")
 

@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/eleunamE-dev/progetto-go/project-be-books/internal/config"
+	"github.com/eleunamE-dev/progetto-go/project-be-books/internal/gutendex"
 	"github.com/eleunamE-dev/progetto-go/project-be-books/internal/httpapi"
 	"github.com/eleunamE-dev/progetto-go/project-be-books/internal/logging"
 )
@@ -34,9 +35,14 @@ func run(ctx context.Context) error {
 	logger := logging.New(os.Stdout, cfg.LogLevel)
 	slog.SetDefault(logger)
 
+	books, err := gutendex.NewClient(cfg.Gutendex.BaseURL, &http.Client{Timeout: cfg.Gutendex.Timeout})
+	if err != nil {
+		return err
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.HTTP.Addr,
-		Handler:           httpapi.NewServer(logger),
+		Handler:           httpapi.NewServer(logger, books),
 		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
 		ReadTimeout:       cfg.HTTP.ReadTimeout,
 		WriteTimeout:      cfg.HTTP.WriteTimeout,

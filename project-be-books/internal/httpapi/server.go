@@ -7,9 +7,9 @@ import (
 )
 
 // NewServer returns the HTTP handler of the API.
-func NewServer(logger *slog.Logger) http.Handler {
+func NewServer(logger *slog.Logger, books BookSearcher) http.Handler {
 	mux := http.NewServeMux()
-	addRoutes(mux)
+	addRoutes(mux, logger, books)
 
 	handler := withRoutingProblems(mux)
 	handler = recoverPanics(logger)(handler)
@@ -18,8 +18,9 @@ func NewServer(logger *slog.Logger) http.Handler {
 	return handler
 }
 
-func addRoutes(mux *http.ServeMux) {
+func addRoutes(mux *http.ServeMux, logger *slog.Logger, books BookSearcher) {
 	mux.Handle("GET /healthz", handleHealthz())
+	mux.Handle("GET /book/search", handleBookSearch(logger, books))
 }
 
 func handleHealthz() http.Handler {
