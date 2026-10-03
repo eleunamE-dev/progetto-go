@@ -7,13 +7,13 @@ from fastapi import FastAPI, HTTPException, Request
 from sqlalchemy.exc import SQLAlchemyError
 
 from bookreviews import books, reviews
-from bookreviews.catalog import CachedCatalog
 from bookreviews.config import Settings
-from bookreviews.database import SqlReviewRepository, create_engine, create_sessions, ping
+from bookreviews.database import SqlReviewRepository, create_sessions, ping
 from bookreviews.gutendex import GutendexClient
 from bookreviews.middleware import RequestContextMiddleware
 from bookreviews.problems import ProblemDetails, register_problem_handlers
 from bookreviews.queue import RabbitQueue
+from bookreviews.wiring import build_catalog, build_engine
 
 logger = logging.getLogger("bookreviews.health")
 
@@ -21,16 +21,14 @@ logger = logging.getLogger("bookreviews.health")
 def create_app(settings: Settings) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        engine = create_engine(settings.database_url.get_secret_value())
+        engine = build_engine(settings)
         queue = RabbitQueue(settings.rabbitmq_url.get_secret_value())
         try:
             async with GutendexClient(
                 str(settings.gutendex_base_url), settings.gutendex_timeout
             ) as gutendex:
                 app.state.engine = engine
-                app.state.catalog = CachedCatalog(
-                    gutendex, ttl=settings.catalog_cache_ttl, max_books=settings.catalog_cache_size
-                )
+                app.state.catalog = build_catalog(gutendex, settings)
                 app.state.reviews = SqlReviewRepository(create_sessions(engine))
                 app.state.queue = queue
                 yield

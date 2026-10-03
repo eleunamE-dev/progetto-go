@@ -186,3 +186,22 @@ async def test_stale_pending_reviews(repository: SqlReviewRepository) -> None:
 
     assert await repository.stale_pending(queued_before=cutoff, limit=10) == [older.id]
     await repository.mark_queued([], CREATED_AT)
+
+
+async def test_expire_pending_reviews(repository: SqlReviewRepository) -> None:
+    abandoned = new_review(created_at=CREATED_AT - timedelta(days=2))
+    recent = new_review(created_at=CREATED_AT)
+    completed = new_review(created_at=CREATED_AT - timedelta(days=3))
+    for review in (abandoned, recent, completed):
+        await repository.add(review)
+    await repository.complete(completed.id, PRIDE_AND_PREJUDICE, CREATED_AT)
+    cutoff = CREATED_AT - timedelta(days=1)
+
+    assert await repository.expire_pending(created_before=cutoff, at=CREATED_AT) == 1
+
+    assert await repository.get(abandoned.id) == replace(abandoned, status=ReviewStatus.FAILED)
+    assert await repository.get(recent.id) == recent
+    assert await repository.get(completed.id) == replace(
+        completed, status=ReviewStatus.COMPLETED, book=PRIDE_AND_PREJUDICE
+    )
+    assert await repository.expire_pending(created_before=cutoff, at=CREATED_AT) == 0

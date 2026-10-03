@@ -6,6 +6,8 @@ from bookreviews.app import create_app
 from bookreviews.books import get_catalog
 from bookreviews.catalog import (
     Book,
+    CatalogBusyError,
+    CatalogCircuitOpenError,
     CatalogTimeoutError,
     CatalogUnavailableError,
     PageOutOfRangeError,
@@ -171,12 +173,43 @@ async def test_catalog_failures(
     assert record["request_id"] == response.headers["x-request-id"]
 
 
+@pytest.mark.parametrize(
+    ("error", "retry_after"),
+    [
+        (CatalogCircuitOpenError(12), "12"),
+        (CatalogBusyError("too many requests to the catalog are in progress"), "1"),
+    ],
+)
+async def test_a_suspended_or_saturated_catalog_asks_to_retry_later(
+    client: httpx.AsyncClient,
+    catalog: FakeCatalog,
+    json_logs: LogRecords,
+    error: Exception,
+    retry_after: str,
+) -> None:
+    catalog.error = error
+
+    response = await client.get("/book/search", params={"q": "dickens"})
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == retry_after
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["detail"] == (
+        "the book catalog is temporarily unavailable, try again later"
+    )
+    [record] = [r for r in json_logs() if r["msg"] == "book catalog request rejected"]
+    assert record["level"] == "INFO"
+    assert record["error"] == str(error)
+    assert not [r for r in json_logs() if r["msg"] == "book catalog request failed"]
+
+
 async def test_query_is_documented(client: httpx.AsyncClient) -> None:
     response = await client.get("/openapi.json")
 
     operation = response.json()["paths"]["/book/search"]["get"]
     assert {p["name"] for p in operation["parameters"]} == {"q", "page"}
-    assert {"200", "404", "422", "502", "504"} <= operation["responses"].keys()
+    assert {"200", "404", "422", "502", "503", "504"} <= operation["responses"].keys()
+    assert "Retry-After" in operation["responses"]["503"]["headers"]
 
 
 def test_get_catalog_reads_the_application_state() -> None:

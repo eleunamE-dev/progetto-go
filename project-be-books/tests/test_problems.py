@@ -1,9 +1,11 @@
 import httpx
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from sqlalchemy import exc as sqlalchemy_errors
 
 from bookreviews.app import create_app
 from bookreviews.config import Settings
+from tests.conftest import LogRecords
 
 
 @pytest.fixture
@@ -17,6 +19,10 @@ def app() -> FastAPI:
     @app.get("/conflict")
     async def conflict() -> None:
         raise HTTPException(status_code=409, detail="the item was changed in the meantime")
+
+    @app.get("/database")
+    async def database(request: Request) -> None:
+        raise request.app.state.database_error
 
     return app
 
@@ -65,3 +71,44 @@ async def test_http_errors_keep_their_detail(client: httpx.AsyncClient) -> None:
 
     assert response.status_code == 409
     assert response.json()["detail"] == "the item was changed in the meantime"
+
+
+@pytest.mark.parametrize(
+    ("error", "logged"),
+    [
+        (
+            sqlalchemy_errors.OperationalError(
+                "SELECT 1", {}, ConnectionRefusedError(111, "Connection refused")
+            ),
+            "ConnectionRefusedError: [Errno 111] Connection refused",
+        ),
+        (
+            sqlalchemy_errors.InterfaceError("SELECT 1", {}, BrokenPipeError(32, "Broken pipe")),
+            "BrokenPipeError: [Errno 32] Broken pipe",
+        ),
+        (
+            sqlalchemy_errors.TimeoutError("QueuePool limit of size 5 overflow 10 reached"),
+            "TimeoutError: QueuePool limit of size 5 overflow 10 reached",
+        ),
+    ],
+)
+async def test_database_outages_ask_to_retry_later(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    json_logs: LogRecords,
+    error: Exception,
+    logged: str,
+) -> None:
+    app.state.database_error = error
+
+    response = await client.get("/database")
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "5"
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["detail"] == "the database is not available, try again later"
+    assert "SELECT" not in response.text
+    [record] = [r for r in json_logs() if r["msg"] == "database unavailable"]
+    assert record["level"] == "ERROR"
+    assert record["error"] == logged
+    assert record["request_id"] == response.headers["x-request-id"]

@@ -12,6 +12,7 @@ from bookreviews.books import get_catalog
 from bookreviews.catalog import Book, BookCatalog, BookNotFoundError
 from bookreviews.problems import (
     CATALOG_ERROR_RESPONSES,
+    SERVICE_UNAVAILABLE_RESPONSES,
     VALIDATION_ERROR_RESPONSES,
     ProblemDetails,
 )
@@ -149,9 +150,10 @@ def get_review_service(
 
 Service = Annotated[ReviewService, Depends(get_review_service)]
 
-NOT_FOUND_RESPONSE: dict[int | str, dict[str, Any]] = {
+REVIEW_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     HTTPStatus.NOT_FOUND: {"model": ProblemDetails, "description": "No such review"},
     **VALIDATION_ERROR_RESPONSES,
+    **SERVICE_UNAVAILABLE_RESPONSES,
 }
 
 
@@ -187,7 +189,7 @@ async def submit_review(
             "model": ReviewResponse,
             "description": "The review is saved and still being processed",
         },
-        **NOT_FOUND_RESPONSE,
+        **REVIEW_ERROR_RESPONSES,
     },
 )
 async def get_review(review_id: uuid.UUID, service: Service, response: Response) -> ReviewResponse:
@@ -198,7 +200,7 @@ async def get_review(review_id: uuid.UUID, service: Service, response: Response)
     return ReviewResponse.from_review(review)
 
 
-@router.put("/{review_id}", responses=NOT_FOUND_RESPONSE)
+@router.put("/{review_id}", responses=REVIEW_ERROR_RESPONSES)
 async def update_review(
     review_id: uuid.UUID, changes: ReviewChanges, service: Service
 ) -> ReviewResponse:
@@ -206,6 +208,6 @@ async def update_review(
     return ReviewResponse.from_review(review)
 
 
-@router.delete("/{review_id}", status_code=HTTPStatus.NO_CONTENT, responses=NOT_FOUND_RESPONSE)
+@router.delete("/{review_id}", status_code=HTTPStatus.NO_CONTENT, responses=REVIEW_ERROR_RESPONSES)
 async def delete_review(review_id: uuid.UUID, service: Service) -> None:
     await service.delete(review_id)

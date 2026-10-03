@@ -7,15 +7,24 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import exc as sqlalchemy_errors
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from bookreviews.catalog import CatalogTimeoutError, CatalogUnavailableError
+from bookreviews.catalog import (
+    CatalogBusyError,
+    CatalogCircuitOpenError,
+    CatalogTimeoutError,
+    CatalogUnavailableError,
+)
 from bookreviews.logs import request_id_var
 from bookreviews.review_service import ReviewNotFoundError
 
 PROBLEM_JSON = "application/problem+json"
 
+DATABASE_RETRY_AFTER = 5
+
 logger = logging.getLogger("bookreviews.catalog")
+database_logger = logging.getLogger("bookreviews.database")
 
 
 class FieldError(BaseModel):
@@ -39,8 +48,22 @@ VALIDATION_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     },
 }
 
+SERVICE_UNAVAILABLE_RESPONSES: dict[int | str, dict[str, Any]] = {
+    HTTPStatus.SERVICE_UNAVAILABLE: {
+        "model": ProblemDetails,
+        "description": "A backing service is temporarily unavailable",
+        "headers": {
+            "Retry-After": {
+                "description": "Seconds to wait before trying again",
+                "schema": {"type": "integer"},
+            }
+        },
+    },
+}
+
 CATALOG_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     HTTPStatus.BAD_GATEWAY: {"model": ProblemDetails, "description": "The book catalog failed"},
+    **SERVICE_UNAVAILABLE_RESPONSES,
     HTTPStatus.GATEWAY_TIMEOUT: {
         "model": ProblemDetails,
         "description": "The book catalog did not answer in time",
@@ -86,6 +109,15 @@ async def _validation_error(request: Request, exc: RequestValidationError) -> JS
 
 
 async def _catalog_unavailable(request: Request, exc: CatalogUnavailableError) -> JSONResponse:
+    if isinstance(exc, CatalogCircuitOpenError | CatalogBusyError):
+        logger.info("book catalog request rejected", extra={"error": str(exc)})
+        retry_after = exc.retry_after if isinstance(exc, CatalogCircuitOpenError) else 1
+        return problem_response(
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            request.url.path,
+            "the book catalog is temporarily unavailable, try again later",
+            headers={"Retry-After": str(int(retry_after))},
+        )
     logger.error(
         "book catalog request failed", extra={"error": str(exc), "cause": repr(exc.__cause__)}
     )
@@ -108,8 +140,27 @@ async def _review_not_found(request: Request, exc: ReviewNotFoundError) -> JSONR
     )
 
 
+async def _database_unavailable(request: Request, exc: Exception) -> JSONResponse:
+    cause = getattr(exc, "orig", None) or exc
+    database_logger.error(
+        "database unavailable", extra={"error": f"{type(cause).__name__}: {cause}"}
+    )
+    return problem_response(
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        request.url.path,
+        "the database is not available, try again later",
+        headers={"Retry-After": str(DATABASE_RETRY_AFTER)},
+    )
+
+
 def register_problem_handlers(app: FastAPI) -> None:
     app.exception_handler(StarletteHTTPException)(_http_exception)
     app.exception_handler(RequestValidationError)(_validation_error)
     app.exception_handler(CatalogUnavailableError)(_catalog_unavailable)
     app.exception_handler(ReviewNotFoundError)(_review_not_found)
+    for error in (
+        sqlalchemy_errors.OperationalError,
+        sqlalchemy_errors.InterfaceError,
+        sqlalchemy_errors.TimeoutError,
+    ):
+        app.exception_handler(error)(_database_unavailable)

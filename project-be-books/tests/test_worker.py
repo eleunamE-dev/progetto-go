@@ -12,6 +12,7 @@ def test_options_come_from_the_settings() -> None:
     settings = Settings(
         worker_concurrency=8,
         enrichment_max_attempts=3,
+        enrichment_deadline=3600,
         sweep_interval=30,
         sweep_after=120,
         worker_shutdown_timeout=5,
@@ -21,6 +22,7 @@ def test_options_come_from_the_settings() -> None:
         topology=Topology(),
         concurrency=8,
         max_attempts=3,
+        deadline=3600,
         sweep_interval=30,
         sweep_after=120,
         shutdown_timeout=5,

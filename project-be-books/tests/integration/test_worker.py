@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
+import aio_pika
 import pytest
 from pydantic import SecretStr
 
@@ -184,6 +185,51 @@ async def test_the_sweeper_queues_forgotten_reviews(
 
     async with running_worker(rabbitmq_url, repository, catalog, options):
         await wait_for_status(repository, forgotten.id, ReviewStatus.COMPLETED)
+
+
+async def test_the_sweeper_gives_up_on_reviews_pending_for_too_long(
+    rabbitmq_url: str,
+    repository: SqlReviewRepository,
+    options: WorkerOptions,
+) -> None:
+    abandoned = await pending_review(repository, datetime.now(UTC) - timedelta(days=2))
+    catalog = FakeCatalog(books={1342: PRIDE_AND_PREJUDICE})
+
+    async with running_worker(rabbitmq_url, repository, catalog, options):
+        await wait_for_status(repository, abandoned.id, ReviewStatus.FAILED)
+
+    assert catalog.book_requests == []
+
+
+async def test_malformed_messages_are_parked(
+    rabbitmq_url: str,
+    repository: SqlReviewRepository,
+    options: WorkerOptions,
+    json_logs: LogRecords,
+) -> None:
+    topology = options.topology
+    connection = await aio_pika.connect_robust(rabbitmq_url)
+    async with connection:
+        channel = await connection.channel()
+        await topology.declare(channel)
+
+        async with running_worker(rabbitmq_url, repository, FakeCatalog(), options):
+            await channel.default_exchange.publish(
+                aio_pika.Message(b"not json"), routing_key=topology.queue
+            )
+            parked = await channel.get_queue(topology.parking_queue)
+            async with asyncio.timeout(10):
+                while True:
+                    message = await parked.get(no_ack=True, fail=False)
+                    if message is not None:
+                        break
+                    await asyncio.sleep(0.05)
+
+    assert message.body == b"not json"
+    assert message.headers == {"x-parked-reason": "not an enrichment request: b'not json'"}
+    [record] = [r for r in json_logs() if r["msg"] == "malformed message parked"]
+    assert record["level"] == "ERROR"
+    assert record["queue"] == topology.parking_queue
 
 
 async def test_serve_starts_and_stops(

@@ -2,12 +2,13 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from importlib.resources import files
-from typing import Any, Self, override
+from typing import Any, Self, cast, override
 
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import (
     JSON,
+    CursorResult,
     Dialect,
     Enum,
     Index,
@@ -149,11 +150,16 @@ class ReviewRow(Base):
         )
 
 
-def create_engine(url: str) -> AsyncEngine:
+def create_engine(
+    url: str, *, pool_size: int = 5, max_overflow: int = 10, pool_timeout: float = 10
+) -> AsyncEngine:
     return create_async_engine(
         url,
         pool_pre_ping=True,
         pool_recycle=POOL_RECYCLE,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_timeout=pool_timeout,
         connect_args={"connect_timeout": CONNECT_TIMEOUT},
     )
 
@@ -241,6 +247,21 @@ class SqlReviewRepository:
                 .limit(limit)
             )
             return list(ids)
+
+    async def expire_pending(self, *, created_before: datetime, at: datetime) -> int:
+        async with self._sessions.begin() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    update(ReviewRow)
+                    .where(
+                        ReviewRow.status == ReviewStatus.PENDING,
+                        ReviewRow.created_at < created_before,
+                    )
+                    .values(status=ReviewStatus.FAILED, processed_at=at)
+                ),
+            )
+            return result.rowcount
 
     async def mark_queued(self, review_ids: Sequence[uuid.UUID], at: datetime) -> None:
         if not review_ids:

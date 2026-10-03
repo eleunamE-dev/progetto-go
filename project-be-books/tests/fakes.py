@@ -75,6 +75,16 @@ class FakeReviewRepository:
         for review_id in review_ids:
             self.queued_at[review_id] = at
 
+    async def expire_pending(self, *, created_before: datetime, at: datetime) -> int:
+        expired = [
+            review_id
+            for review_id, review in self.reviews.items()
+            if review.status is ReviewStatus.PENDING and review.created_at < created_before
+        ]
+        for review_id in expired:
+            self._finish(review_id, ReviewStatus.FAILED, None)
+        return len(expired)
+
     def _finish(self, review_id: uuid.UUID, status: ReviewStatus, book: Book | None) -> bool:
         review = self.reviews.get(review_id)
         if review is None or review.status is not ReviewStatus.PENDING:
@@ -86,12 +96,18 @@ class FakeReviewRepository:
 @dataclass
 class FakeQueue:
     enqueued: list[uuid.UUID] = field(default_factory=list)
+    parked: list[tuple[bytes, str]] = field(default_factory=list)
     accepted: int | None = None
 
     async def enqueue(self, review_id: uuid.UUID) -> None:
         if self.accepted is not None and len(self.enqueued) >= self.accepted:
             raise QueueUnavailableError("RabbitMQ is down")
         self.enqueued.append(review_id)
+
+    async def park(self, body: bytes, reason: str) -> None:
+        if self.accepted == 0:
+            raise QueueUnavailableError("RabbitMQ is down")
+        self.parked.append((body, reason))
 
 
 @dataclass
