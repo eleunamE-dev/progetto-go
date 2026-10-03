@@ -8,8 +8,8 @@ from bookreviews.books import get_catalog
 from bookreviews.catalog import Book
 from bookreviews.config import Settings
 from bookreviews.database import SqlReviewRepository
-from bookreviews.reviews import get_review_repository
-from tests.fakes import FakeCatalog
+from bookreviews.reviews import get_review_queue, get_review_repository
+from tests.fakes import FakeCatalog, FakeQueue
 
 pytestmark = pytest.mark.integration
 
@@ -20,6 +20,8 @@ def app(repository: SqlReviewRepository, engine: AsyncEngine) -> FastAPI:
     catalog = FakeCatalog(books={1342: Book(id=1342, title="Pride and Prejudice")})
     app.dependency_overrides[get_review_repository] = lambda: repository
     app.dependency_overrides[get_catalog] = lambda: catalog
+    queue = FakeQueue()
+    app.dependency_overrides[get_review_queue] = lambda: queue
     app.state.engine = engine
     return app
 

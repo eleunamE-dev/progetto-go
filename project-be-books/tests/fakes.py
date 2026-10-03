@@ -1,9 +1,10 @@
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from bookreviews.catalog import Book, BookNotFoundError, SearchResult
-from bookreviews.review_service import Review
+from bookreviews.review_service import QueueUnavailableError, Review, ReviewStatus
 
 
 @dataclass
@@ -33,9 +34,11 @@ class FakeCatalog:
 @dataclass
 class FakeReviewRepository:
     reviews: dict[uuid.UUID, Review] = field(default_factory=dict)
+    queued_at: dict[uuid.UUID, datetime] = field(default_factory=dict)
 
     async def add(self, review: Review) -> None:
         self.reviews[review.id] = review
+        self.queued_at[review.id] = review.created_at
 
     async def get(self, review_id: uuid.UUID) -> Review | None:
         return self.reviews.get(review_id)
@@ -51,4 +54,56 @@ class FakeReviewRepository:
         return updated
 
     async def delete(self, review_id: uuid.UUID) -> bool:
+        self.queued_at.pop(review_id, None)
         return self.reviews.pop(review_id, None) is not None
+
+    async def complete(self, review_id: uuid.UUID, book: Book, at: datetime) -> bool:
+        return self._finish(review_id, ReviewStatus.COMPLETED, book)
+
+    async def fail(self, review_id: uuid.UUID, at: datetime) -> bool:
+        return self._finish(review_id, ReviewStatus.FAILED, None)
+
+    async def stale_pending(self, *, queued_before: datetime, limit: int) -> list[uuid.UUID]:
+        stale = sorted(
+            (queued_at, review_id)
+            for review_id, queued_at in self.queued_at.items()
+            if self.reviews[review_id].status is ReviewStatus.PENDING and queued_at < queued_before
+        )
+        return [review_id for _, review_id in stale][:limit]
+
+    async def mark_queued(self, review_ids: Sequence[uuid.UUID], at: datetime) -> None:
+        for review_id in review_ids:
+            self.queued_at[review_id] = at
+
+    def _finish(self, review_id: uuid.UUID, status: ReviewStatus, book: Book | None) -> bool:
+        review = self.reviews.get(review_id)
+        if review is None or review.status is not ReviewStatus.PENDING:
+            return False
+        self.reviews[review_id] = replace(review, status=status, book=book)
+        return True
+
+
+@dataclass
+class FakeQueue:
+    enqueued: list[uuid.UUID] = field(default_factory=list)
+    accepted: int | None = None
+
+    async def enqueue(self, review_id: uuid.UUID) -> None:
+        if self.accepted is not None and len(self.enqueued) >= self.accepted:
+            raise QueueUnavailableError("RabbitMQ is down")
+        self.enqueued.append(review_id)
+
+
+@dataclass
+class FakeMessage:
+    body: bytes
+    headers: dict[str, object] = field(default_factory=dict)
+    acked: bool = False
+    rejected: bool = False
+
+    async def ack(self) -> None:
+        self.acked = True
+
+    async def reject(self, requeue: bool = False) -> None:
+        assert not requeue
+        self.rejected = True

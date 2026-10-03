@@ -13,6 +13,7 @@ from bookreviews.database import SqlReviewRepository, create_engine, create_sess
 from bookreviews.gutendex import GutendexClient
 from bookreviews.middleware import RequestContextMiddleware
 from bookreviews.problems import ProblemDetails, register_problem_handlers
+from bookreviews.queue import RabbitQueue
 
 logger = logging.getLogger("bookreviews.health")
 
@@ -21,6 +22,7 @@ def create_app(settings: Settings) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         engine = create_engine(settings.database_url.get_secret_value())
+        queue = RabbitQueue(settings.rabbitmq_url.get_secret_value())
         try:
             async with GutendexClient(
                 str(settings.gutendex_base_url), settings.gutendex_timeout
@@ -30,8 +32,10 @@ def create_app(settings: Settings) -> FastAPI:
                     gutendex, ttl=settings.catalog_cache_ttl, max_books=settings.catalog_cache_size
                 )
                 app.state.reviews = SqlReviewRepository(create_sessions(engine))
+                app.state.queue = queue
                 yield
         finally:
+            await queue.close()
             await engine.dispose()
 
     app = FastAPI(title="Book reviews", version="0.1.0", lifespan=lifespan)

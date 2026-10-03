@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Book review service backed by the Gutendex catalog"
 requires-python = ">=3.14"
 dependencies = [
+    "aio-pika>=10.1",
     "aiomysql>=0.3",
     "alembic>=1.20",
     "fastapi>=0.142",
@@ -16,6 +17,7 @@ dependencies = [
 [project.scripts]
 bookreviews-api = "bookreviews.main:run_api"
 bookreviews-migrate = "bookreviews.main:run_migrations"
+bookreviews-worker = "bookreviews.main:run_worker"
 
 [dependency-groups]
 dev = [
@@ -43,7 +45,7 @@ select = [
 ignore = ["TRY003"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "PLR2004", "PLR0913", "PLR0917"]
+"tests/**" = ["S101", "PLR2004", "PLR0913", "PLR0917", "ARG001", "ARG002"]
 
 [tool.mypy]
 strict = true

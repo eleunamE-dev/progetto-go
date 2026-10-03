@@ -3,6 +3,7 @@ from fastapi import FastAPI
 
 from bookreviews.catalog import CachedCatalog
 from bookreviews.database import SqlReviewRepository, create_engine
+from bookreviews.queue import RabbitQueue
 from tests.conftest import LogRecords
 
 
@@ -25,6 +26,7 @@ async def test_lifespan_sets_up_the_dependencies(app: FastAPI) -> None:
     async with app.router.lifespan_context(app):
         assert isinstance(app.state.catalog, CachedCatalog)
         assert isinstance(app.state.reviews, SqlReviewRepository)
+        assert isinstance(app.state.queue, RabbitQueue)
 
 
 async def test_readyz_reports_an_unreachable_database(
