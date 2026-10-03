@@ -4,14 +4,18 @@ version = "0.1.0"
 description = "Book review service backed by the Gutendex catalog"
 requires-python = ">=3.14"
 dependencies = [
+    "aiomysql>=0.3",
+    "alembic>=1.20",
     "fastapi>=0.142",
     "httpx>=0.28",
     "pydantic-settings>=2.15",
+    "sqlalchemy[asyncio]>=2.1",
     "uvicorn[standard]>=0.54",
 ]
 
 [project.scripts]
 bookreviews-api = "bookreviews.main:run_api"
+bookreviews-migrate = "bookreviews.main:run_migrations"
 
 [dependency-groups]
 dev = [
@@ -51,6 +55,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = ["--strict-markers", "--strict-config"]
+markers = ["integration: needs a MariaDB database, set TEST_DATABASE_URL"]
 
 [tool.coverage.run]
 source = ["bookreviews"]

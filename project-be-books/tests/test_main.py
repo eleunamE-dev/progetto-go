@@ -28,3 +28,14 @@ def test_run_api_starts_uvicorn_with_the_settings(monkeypatch: pytest.MonkeyPatc
         "server_header": False,
         "timeout_graceful_shutdown": 15,
     }
+
+
+def test_run_migrations_upgrades_the_configured_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    upgraded: list[str] = []
+    monkeypatch.setattr(main, "upgrade_database", upgraded.append)
+    monkeypatch.setattr(main, "configure_logging", lambda _level: None)
+    monkeypatch.setenv("DATABASE_URL", "mysql+aiomysql://app:secret@db:3306/reviews")
+
+    main.run_migrations()
+
+    assert upgraded == ["mysql+aiomysql://app:secret@db:3306/reviews"]

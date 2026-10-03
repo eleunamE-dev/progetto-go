@@ -2,6 +2,7 @@ import uvicorn
 
 from bookreviews.app import create_app
 from bookreviews.config import Settings
+from bookreviews.database import upgrade_database
 from bookreviews.logs import configure_logging
 
 
@@ -17,3 +18,9 @@ def run_api() -> None:
         server_header=False,
         timeout_graceful_shutdown=settings.http_shutdown_timeout,
     )
+
+
+def run_migrations() -> None:
+    settings = Settings()
+    configure_logging(settings.log_level)
+    upgrade_database(settings.database_url.get_secret_value())

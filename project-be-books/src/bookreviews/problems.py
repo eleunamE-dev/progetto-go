@@ -11,6 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from bookreviews.catalog import CatalogTimeoutError, CatalogUnavailableError
 from bookreviews.logs import request_id_var
+from bookreviews.review_service import ReviewNotFoundError
 
 PROBLEM_JSON = "application/problem+json"
 
@@ -94,7 +95,14 @@ async def _catalog_unavailable(request: Request, exc: CatalogUnavailableError) -
     )
 
 
+async def _review_not_found(request: Request, exc: ReviewNotFoundError) -> JSONResponse:
+    return problem_response(
+        HTTPStatus.NOT_FOUND, request.url.path, f"no review with id {exc.review_id}"
+    )
+
+
 def register_problem_handlers(app: FastAPI) -> None:
     app.exception_handler(StarletteHTTPException)(_http_exception)
     app.exception_handler(RequestValidationError)(_validation_error)
     app.exception_handler(CatalogUnavailableError)(_catalog_unavailable)
+    app.exception_handler(ReviewNotFoundError)(_review_not_found)
