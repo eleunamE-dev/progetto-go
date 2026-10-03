@@ -1,15 +1,17 @@
 package main
 
+import "sync/atomic"
+
 type MeasuredWorker struct {
 	Worker
-	value int
+	value atomic.Int64
 }
 
 func (m *MeasuredWorker) Work() {
 	m.Worker.Work()
-	m.value++
+	m.value.Add(1)
 }
 
 func (m *MeasuredWorker) Value() int {
-	return m.value
+	return int(m.value.Load())
 }
