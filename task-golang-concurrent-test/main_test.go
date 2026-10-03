@@ -6,9 +6,6 @@ import (
 	"time"
 )
 
-// workerFunc adapts a plain function to the Worker interface. The tests use it
-// instead of SlowWorker: what is under test is MeasuredWorker, so there is no
-// reason to wait 5 seconds for every operation.
 type workerFunc func()
 
 func (f workerFunc) Work() { f() }
@@ -24,16 +21,13 @@ func TestCounter(t *testing.T) {
 		mw.Work()
 
 		assertEqual(t, mw.Value(), 3)
-		assertEqual(t, calls, 3) // every operation reached the wrapped worker
+		assertEqual(t, calls, 3)
 	})
 
 	t.Run("concurrent processing and counting", func(t *testing.T) {
 		const goroutines, opsPerGoroutine = 100, 1000
 		mw := &MeasuredWorker{Worker: workerFunc(func() {})}
 
-		// All goroutines wait on the same signal and then hammer the counter
-		// together: the more they overlap, the more likely a non-atomic
-		// increment loses updates, even without the race detector.
 		start := make(chan struct{})
 		var wg sync.WaitGroup
 		wg.Add(goroutines)
@@ -55,9 +49,6 @@ func TestCounter(t *testing.T) {
 	t.Run("operations on the wrapped worker run in parallel", func(t *testing.T) {
 		const parallelism = 10
 
-		// Every call blocks until all `parallelism` calls are in progress at
-		// the same time. If MeasuredWorker serialised them (e.g. by holding a
-		// lock while working), the first call would block the others forever.
 		var arrived sync.WaitGroup
 		arrived.Add(parallelism)
 		mw := &MeasuredWorker{Worker: workerFunc(func() {
@@ -87,8 +78,6 @@ func assertEqual(t testing.TB, got int, want int) {
 	}
 }
 
-// waitOrFail waits for wg, failing the test if it takes longer than timeout,
-// so that a deadlock shows up as a test failure instead of a hung test run.
 func waitOrFail(t testing.TB, wg *sync.WaitGroup, timeout time.Duration, msg string) {
 	t.Helper()
 	done := make(chan struct{})
