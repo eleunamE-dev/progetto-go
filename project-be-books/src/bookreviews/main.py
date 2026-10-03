@@ -1,5 +1,9 @@
+import asyncio
+import contextlib
+
 import uvicorn
 
+from bookreviews import worker
 from bookreviews.app import create_app
 from bookreviews.config import Settings
 from bookreviews.database import upgrade_database
@@ -24,3 +28,10 @@ def run_migrations() -> None:
     settings = Settings()
     configure_logging(settings.log_level)
     upgrade_database(settings.database_url.get_secret_value())
+
+
+def run_worker() -> None:
+    settings = Settings()
+    configure_logging(settings.log_level)
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(worker.main(settings))

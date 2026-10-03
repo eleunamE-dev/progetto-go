@@ -14,10 +14,16 @@ class Settings(BaseSettings):
     http_port: int = Field(default=8080, ge=1, le=65535)
     http_shutdown_timeout: int = Field(default=15, gt=0)
     database_url: SecretStr = SecretStr("mysql+aiomysql://user:password@localhost:3306/bookreviews")
+    rabbitmq_url: SecretStr = SecretStr("amqp://user:password@localhost:5672/")
     gutendex_base_url: HttpUrl = HttpUrl("https://gutendex.com")
     gutendex_timeout: float = Field(default=60, gt=0)
     catalog_cache_ttl: float = Field(default=3600, gt=0)
     catalog_cache_size: int = Field(default=10_000, gt=0)
+    worker_concurrency: int = Field(default=4, gt=0)
+    enrichment_max_attempts: int = Field(default=5, gt=0)
+    sweep_interval: float = Field(default=60, gt=0)
+    sweep_after: float = Field(default=600, gt=0)
+    worker_shutdown_timeout: float = Field(default=15, gt=0)
 
     @field_validator("log_level", mode="before")
     @classmethod

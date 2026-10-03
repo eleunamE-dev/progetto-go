@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := help
 
 TEST_DATABASE_URL ?= mysql+aiomysql://root:rootpassword@localhost:3306/bookreviews_test
+TEST_RABBITMQ_URL ?= amqp://user:password@localhost:5672/
 
 .PHONY: help
 help: ## List the available targets
@@ -18,6 +19,10 @@ hooks: ## Install the git hooks: checks on commit, tests on push
 run: ## Run the API on the host (needs `make migrate` first)
 	uv run bookreviews-api
 
+.PHONY: worker
+worker: ## Run the enrichment worker on the host
+	uv run bookreviews-worker
+
 .PHONY: migrate
 migrate: ## Apply the database migrations to DATABASE_URL
 	uv run bookreviews-migrate
@@ -27,9 +32,9 @@ test: ## Run the unit tests with coverage
 	uv run pytest --cov
 
 .PHONY: test-all
-test-all: ## Run unit and database tests, using the MariaDB of Docker Compose
-	docker compose up --detach --wait db
-	TEST_DATABASE_URL=$(TEST_DATABASE_URL) uv run pytest --cov
+test-all: ## Run every test, using MariaDB and RabbitMQ from Docker Compose
+	docker compose up --detach --wait db rabbitmq
+	TEST_DATABASE_URL=$(TEST_DATABASE_URL) TEST_RABBITMQ_URL=$(TEST_RABBITMQ_URL) uv run pytest --cov
 
 .PHONY: lint
 lint: ## Check formatting, lint rules and types

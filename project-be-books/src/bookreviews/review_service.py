@@ -1,3 +1,4 @@
+import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -5,12 +6,15 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Protocol
 
-from bookreviews.catalog import BookCatalog
+from bookreviews.catalog import Book, BookCatalog
+
+logger = logging.getLogger("bookreviews.reviews")
 
 
 class ReviewStatus(StrEnum):
     PENDING = "pending"
     COMPLETED = "completed"
+    FAILED = "failed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,12 +26,17 @@ class Review:
     status: ReviewStatus
     created_at: datetime
     updated_at: datetime
+    book: Book | None = None
 
 
 class ReviewNotFoundError(Exception):
     def __init__(self, review_id: uuid.UUID) -> None:
         super().__init__(f"review {review_id} not found")
         self.review_id = review_id
+
+
+class QueueUnavailableError(Exception):
+    pass
 
 
 class ReviewRepository(Protocol):
@@ -42,6 +51,10 @@ class ReviewRepository(Protocol):
     async def delete(self, review_id: uuid.UUID) -> bool: ...
 
 
+class ReviewQueue(Protocol):
+    async def enqueue(self, review_id: uuid.UUID) -> None: ...
+
+
 def utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -51,10 +64,12 @@ class ReviewService:
         self,
         repository: ReviewRepository,
         catalog: BookCatalog,
+        queue: ReviewQueue,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._repository = repository
         self._catalog = catalog
+        self._queue = queue
         self._clock = clock
 
     async def submit(self, book_id: int, content: str, score: int) -> Review:
@@ -70,6 +85,13 @@ class ReviewService:
             updated_at=now,
         )
         await self._repository.add(review)
+        try:
+            await self._queue.enqueue(review.id)
+        except QueueUnavailableError as exc:
+            logger.warning(
+                "review saved but not queued, the sweeper will queue it",
+                extra={"review_id": str(review.id), "error": str(exc)},
+            )
         return review
 
     async def get(self, review_id: uuid.UUID) -> Review:

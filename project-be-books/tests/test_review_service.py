@@ -5,7 +5,8 @@ import pytest
 
 from bookreviews.catalog import Book, BookNotFoundError, CatalogUnavailableError
 from bookreviews.review_service import Review, ReviewNotFoundError, ReviewService, ReviewStatus
-from tests.fakes import FakeCatalog, FakeReviewRepository
+from tests.conftest import LogRecords
+from tests.fakes import FakeCatalog, FakeQueue, FakeReviewRepository
 
 NOW = datetime(2026, 10, 3, 12, 0, tzinfo=UTC)
 
@@ -34,8 +35,15 @@ def clock() -> Clock:
 
 
 @pytest.fixture
-def service(repository: FakeReviewRepository, catalog: FakeCatalog, clock: Clock) -> ReviewService:
-    return ReviewService(repository, catalog, clock)
+def queue() -> FakeQueue:
+    return FakeQueue()
+
+
+@pytest.fixture
+def service(
+    repository: FakeReviewRepository, catalog: FakeCatalog, queue: FakeQueue, clock: Clock
+) -> ReviewService:
+    return ReviewService(repository, catalog, queue, clock)
 
 
 async def test_submit_stores_a_pending_review(
@@ -55,6 +63,30 @@ async def test_submit_stores_a_pending_review(
     assert review.id.version == 7
     assert repository.reviews == {review.id: review}
     assert catalog.book_requests == [1342]
+
+
+async def test_submit_queues_the_review_for_enrichment(
+    service: ReviewService, queue: FakeQueue
+) -> None:
+    review = await service.submit(1342, "A classic.", 9)
+
+    assert queue.enqueued == [review.id]
+
+
+async def test_submit_keeps_the_review_when_the_queue_is_unavailable(
+    service: ReviewService,
+    repository: FakeReviewRepository,
+    queue: FakeQueue,
+    json_logs: LogRecords,
+) -> None:
+    queue.accepted = 0
+
+    review = await service.submit(1342, "A classic.", 9)
+
+    assert repository.reviews == {review.id: review}
+    [record] = [r for r in json_logs() if r["level"] == "WARNING"]
+    assert record["msg"] == "review saved but not queued, the sweeper will queue it"
+    assert record["review_id"] == str(review.id)
 
 
 async def test_review_ids_follow_creation_order(service: ReviewService) -> None:

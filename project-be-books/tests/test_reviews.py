@@ -8,18 +8,28 @@ from fastapi import FastAPI, Request
 
 from bookreviews.app import create_app
 from bookreviews.books import get_catalog
-from bookreviews.catalog import Book, CatalogTimeoutError
+from bookreviews.catalog import Book, CatalogTimeoutError, Person
 from bookreviews.config import Settings
 from bookreviews.review_service import Review, ReviewStatus
-from bookreviews.reviews import get_review_repository
-from tests.fakes import FakeCatalog, FakeReviewRepository
+from bookreviews.reviews import get_review_queue, get_review_repository
+from tests.fakes import FakeCatalog, FakeQueue, FakeReviewRepository
 
-PRIDE_AND_PREJUDICE = Book(id=1342, title="Pride and Prejudice")
+PRIDE_AND_PREJUDICE = Book(
+    id=1342,
+    title="Pride and Prejudice",
+    authors=(Person("Austen, Jane", 1775, 1817),),
+    subjects=("Courtship -- Fiction",),
+    bookshelves=("Harvard Classics",),
+    languages=("en",),
+    summaries=('"Pride and Prejudice" by Jane Austen is a novel published in 1813.',),
+    cover_url="https://www.gutenberg.org/cache/epub/1342/pg1342.cover.medium.jpg",
+    download_count=190246,
+)
 CREATED_AT = datetime(2026, 10, 3, 12, 0, tzinfo=UTC)
 VALID = {"id": 1342, "review": "A classic.", "score": 9}
 
 
-def stored_review(status: ReviewStatus = ReviewStatus.PENDING) -> Review:
+def stored_review(status: ReviewStatus = ReviewStatus.PENDING, book: Book | None = None) -> Review:
     return Review(
         id=uuid.uuid7(),
         book_id=1342,
@@ -28,6 +38,7 @@ def stored_review(status: ReviewStatus = ReviewStatus.PENDING) -> Review:
         status=status,
         created_at=CREATED_AT,
         updated_at=CREATED_AT,
+        book=book,
     )
 
 
@@ -42,14 +53,22 @@ def catalog() -> FakeCatalog:
 
 
 @pytest.fixture
-def app(repository: FakeReviewRepository, catalog: FakeCatalog) -> FastAPI:
+def queue() -> FakeQueue:
+    return FakeQueue()
+
+
+@pytest.fixture
+def app(repository: FakeReviewRepository, catalog: FakeCatalog, queue: FakeQueue) -> FastAPI:
     app = create_app(Settings())
     app.dependency_overrides[get_review_repository] = lambda: repository
     app.dependency_overrides[get_catalog] = lambda: catalog
+    app.dependency_overrides[get_review_queue] = lambda: queue
     return app
 
 
-async def test_submit_review(client: httpx.AsyncClient, repository: FakeReviewRepository) -> None:
+async def test_submit_review(
+    client: httpx.AsyncClient, repository: FakeReviewRepository, queue: FakeQueue
+) -> None:
     response = await client.post("/review", json=VALID | {"review": "  A classic.  "})
 
     assert response.status_code == 202
@@ -64,8 +83,10 @@ async def test_submit_review(client: httpx.AsyncClient, repository: FakeReviewRe
         "score": 9,
         "created_at": body["created_at"],
         "updated_at": body["created_at"],
+        "book": None,
     }
     assert repository.reviews[review_id].content == "A classic."
+    assert queue.enqueued == [review_id]
 
 
 async def test_book_id_may_be_a_numeric_string(client: httpx.AsyncClient) -> None:
@@ -174,20 +195,46 @@ async def test_get_pending_review(
         "score": 9,
         "created_at": "2026-10-03T12:00:00Z",
         "updated_at": "2026-10-03T12:00:00Z",
+        "book": None,
     }
 
 
 async def test_get_completed_review(
     client: httpx.AsyncClient, repository: FakeReviewRepository
 ) -> None:
-    review = stored_review(ReviewStatus.COMPLETED)
+    review = stored_review(ReviewStatus.COMPLETED, PRIDE_AND_PREJUDICE)
     await repository.add(review)
 
     response = await client.get(f"/review/{review.id}")
 
     assert response.status_code == 200
     assert "retry-after" not in response.headers
-    assert response.json()["status"] == "completed"
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["book"] == {
+        "id": 1342,
+        "title": "Pride and Prejudice",
+        "authors": [{"name": "Austen, Jane", "birth_year": 1775, "death_year": 1817}],
+        "subjects": ["Courtship -- Fiction"],
+        "bookshelves": ["Harvard Classics"],
+        "languages": ["en"],
+        "summaries": ['"Pride and Prejudice" by Jane Austen is a novel published in 1813.'],
+        "cover_url": "https://www.gutenberg.org/cache/epub/1342/pg1342.cover.medium.jpg",
+        "download_count": 190246,
+    }
+
+
+async def test_get_failed_review(
+    client: httpx.AsyncClient, repository: FakeReviewRepository
+) -> None:
+    review = stored_review(ReviewStatus.FAILED)
+    await repository.add(review)
+
+    response = await client.get(f"/review/{review.id}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["book"] is None
 
 
 async def test_get_unknown_review(client: httpx.AsyncClient) -> None:
@@ -284,3 +331,11 @@ def test_get_review_repository_reads_the_application_state() -> None:
     app.state.reviews = repository
 
     assert get_review_repository(Request({"type": "http", "app": app})) is repository
+
+
+def test_get_review_queue_reads_the_application_state() -> None:
+    app = FastAPI()
+    queue = FakeQueue()
+    app.state.queue = queue
+
+    assert get_review_queue(Request({"type": "http", "app": app})) is queue

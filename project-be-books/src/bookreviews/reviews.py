@@ -9,10 +9,11 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
 from bookreviews.books import get_catalog
-from bookreviews.catalog import BookCatalog, BookNotFoundError
+from bookreviews.catalog import Book, BookCatalog, BookNotFoundError
 from bookreviews.problems import CATALOG_ERROR_RESPONSES, ProblemDetails
 from bookreviews.review_service import (
     Review,
+    ReviewQueue,
     ReviewRepository,
     ReviewService,
     ReviewStatus,
@@ -63,6 +64,41 @@ class ReviewChanges(BaseModel):
     score: Score
 
 
+class AuthorDetails(BaseModel):
+    name: str
+    birth_year: int | None
+    death_year: int | None
+
+
+class BookDetails(BaseModel):
+    id: int
+    title: str
+    authors: list[AuthorDetails]
+    subjects: list[str]
+    bookshelves: list[str]
+    languages: list[str]
+    summaries: list[str]
+    cover_url: str | None
+    download_count: int
+
+    @classmethod
+    def from_book(cls, book: Book) -> Self:
+        return cls(
+            id=book.id,
+            title=book.title,
+            authors=[
+                AuthorDetails(name=a.name, birth_year=a.birth_year, death_year=a.death_year)
+                for a in book.authors
+            ],
+            subjects=list(book.subjects),
+            bookshelves=list(book.bookshelves),
+            languages=list(book.languages),
+            summaries=list(book.summaries),
+            cover_url=book.cover_url,
+            download_count=book.download_count,
+        )
+
+
 class ReviewResponse(BaseModel):
     id: uuid.UUID
     status: ReviewStatus
@@ -71,6 +107,9 @@ class ReviewResponse(BaseModel):
     score: int
     created_at: datetime
     updated_at: datetime
+    book: BookDetails | None = Field(
+        description="Book data from the catalog, available once the review is completed."
+    )
 
     @classmethod
     def from_review(cls, review: Review) -> Self:
@@ -82,6 +121,7 @@ class ReviewResponse(BaseModel):
             score=review.score,
             created_at=review.created_at,
             updated_at=review.updated_at,
+            book=None if review.book is None else BookDetails.from_book(review.book),
         )
 
 
@@ -90,11 +130,17 @@ def get_review_repository(request: Request) -> ReviewRepository:
     return repository
 
 
+def get_review_queue(request: Request) -> ReviewQueue:
+    queue: ReviewQueue = request.app.state.queue
+    return queue
+
+
 def get_review_service(
     repository: Annotated[ReviewRepository, Depends(get_review_repository)],
     catalog: Annotated[BookCatalog, Depends(get_catalog)],
+    queue: Annotated[ReviewQueue, Depends(get_review_queue)],
 ) -> ReviewService:
-    return ReviewService(repository, catalog)
+    return ReviewService(repository, catalog, queue)
 
 
 Service = Annotated[ReviewService, Depends(get_review_service)]
