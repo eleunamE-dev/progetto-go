@@ -18,6 +18,7 @@ dependencies = [
 bookreviews-api = "bookreviews.main:run_api"
 bookreviews-migrate = "bookreviews.main:run_migrations"
 bookreviews-worker = "bookreviews.main:run_worker"
+bookreviews-openapi = "bookreviews.openapi:main"
 
 [dependency-groups]
 dev = [

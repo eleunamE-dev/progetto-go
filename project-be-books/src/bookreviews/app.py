@@ -38,7 +38,15 @@ def create_app(settings: Settings) -> FastAPI:
             await queue.close()
             await engine.dispose()
 
-    app = FastAPI(title="Book reviews", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="Book reviews",
+        version="0.1.0",
+        description=(
+            "Search Project Gutenberg books and review them. Reviews are accepted right away "
+            "and enriched in the background with the data of the book."
+        ),
+        lifespan=lifespan,
+    )
     app.add_middleware(RequestContextMiddleware)
     register_problem_handlers(app)
     app.include_router(books.router)

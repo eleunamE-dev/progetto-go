@@ -5,7 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import AfterValidator, BaseModel
 
 from bookreviews.catalog import Book, BookCatalog, PageOutOfRangeError
-from bookreviews.problems import CATALOG_ERROR_RESPONSES, ProblemDetails
+from bookreviews.problems import (
+    CATALOG_ERROR_RESPONSES,
+    VALIDATION_ERROR_RESPONSES,
+    ProblemDetails,
+)
 
 MAX_QUERY_LENGTH = 200
 
@@ -65,6 +69,7 @@ class SearchResponse(BaseModel):
     "/book/search",
     responses={
         HTTPStatus.NOT_FOUND: {"model": ProblemDetails, "description": "No such page of results"},
+        **VALIDATION_ERROR_RESPONSES,
         **CATALOG_ERROR_RESPONSES,
     },
 )

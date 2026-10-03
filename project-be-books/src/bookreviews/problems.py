@@ -32,6 +32,13 @@ class ProblemDetails(BaseModel):
     errors: list[FieldError] | None = None
 
 
+VALIDATION_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    HTTPStatus.UNPROCESSABLE_CONTENT: {
+        "model": ProblemDetails,
+        "description": "The request is not valid; `errors` lists the invalid fields",
+    },
+}
+
 CATALOG_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     HTTPStatus.BAD_GATEWAY: {"model": ProblemDetails, "description": "The book catalog failed"},
     HTTPStatus.GATEWAY_TIMEOUT: {

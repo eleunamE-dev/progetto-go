@@ -10,7 +10,11 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstra
 
 from bookreviews.books import get_catalog
 from bookreviews.catalog import Book, BookCatalog, BookNotFoundError
-from bookreviews.problems import CATALOG_ERROR_RESPONSES, ProblemDetails
+from bookreviews.problems import (
+    CATALOG_ERROR_RESPONSES,
+    VALIDATION_ERROR_RESPONSES,
+    ProblemDetails,
+)
 from bookreviews.review_service import (
     Review,
     ReviewQueue,
@@ -146,11 +150,16 @@ def get_review_service(
 Service = Annotated[ReviewService, Depends(get_review_service)]
 
 NOT_FOUND_RESPONSE: dict[int | str, dict[str, Any]] = {
-    HTTPStatus.NOT_FOUND: {"model": ProblemDetails, "description": "No such review"}
+    HTTPStatus.NOT_FOUND: {"model": ProblemDetails, "description": "No such review"},
+    **VALIDATION_ERROR_RESPONSES,
 }
 
 
-@router.post("", status_code=HTTPStatus.ACCEPTED, responses=CATALOG_ERROR_RESPONSES)
+@router.post(
+    "",
+    status_code=HTTPStatus.ACCEPTED,
+    responses={**VALIDATION_ERROR_RESPONSES, **CATALOG_ERROR_RESPONSES},
+)
 async def submit_review(
     submission: ReviewSubmission, service: Service, response: Response
 ) -> ReviewResponse:

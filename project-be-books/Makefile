@@ -36,6 +36,10 @@ test-all: ## Run every test, using MariaDB and RabbitMQ from Docker Compose
 	docker compose up --detach --wait db rabbitmq
 	TEST_DATABASE_URL=$(TEST_DATABASE_URL) TEST_RABBITMQ_URL=$(TEST_RABBITMQ_URL) uv run pytest --cov
 
+.PHONY: openapi
+openapi: ## Export the OpenAPI document to docs/openapi.json
+	uv run bookreviews-openapi docs/openapi.json
+
 .PHONY: lint
 lint: ## Check formatting, lint rules and types
 	uv run ruff format --check .
