@@ -8,8 +8,11 @@ VARIABLES = (
     "HTTP_HOST",
     "HTTP_PORT",
     "HTTP_SHUTDOWN_TIMEOUT",
+    "DATABASE_URL",
     "GUTENDEX_BASE_URL",
     "GUTENDEX_TIMEOUT",
+    "CATALOG_CACHE_TTL",
+    "CATALOG_CACHE_SIZE",
 )
 
 
@@ -26,8 +29,13 @@ def test_defaults_need_no_configuration() -> None:
     assert settings.http_host == "0.0.0.0"  # noqa: S104
     assert settings.http_port == 8080
     assert settings.http_shutdown_timeout == 15
+    assert settings.database_url.get_secret_value() == (
+        "mysql+aiomysql://user:password@localhost:3306/bookreviews"
+    )
     assert str(settings.gutendex_base_url) == "https://gutendex.com/"
     assert settings.gutendex_timeout == 60
+    assert settings.catalog_cache_ttl == 3600
+    assert settings.catalog_cache_size == 10_000
 
 
 def test_environment_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -35,8 +43,11 @@ def test_environment_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("HTTP_HOST", "127.0.0.1")
     monkeypatch.setenv("HTTP_PORT", "9090")
     monkeypatch.setenv("HTTP_SHUTDOWN_TIMEOUT", "30")
+    monkeypatch.setenv("DATABASE_URL", "mysql+aiomysql://app:secret@db:3306/reviews")
     monkeypatch.setenv("GUTENDEX_BASE_URL", "http://localhost:8000")
     monkeypatch.setenv("GUTENDEX_TIMEOUT", "2.5")
+    monkeypatch.setenv("CATALOG_CACHE_TTL", "60")
+    monkeypatch.setenv("CATALOG_CACHE_SIZE", "100")
 
     settings = Settings()
 
@@ -44,8 +55,17 @@ def test_environment_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.http_host == "127.0.0.1"
     assert settings.http_port == 9090
     assert settings.http_shutdown_timeout == 30
+    assert settings.database_url.get_secret_value() == "mysql+aiomysql://app:secret@db:3306/reviews"
     assert str(settings.gutendex_base_url) == "http://localhost:8000/"
     assert settings.gutendex_timeout == 2.5
+    assert settings.catalog_cache_ttl == 60
+    assert settings.catalog_cache_size == 100
+
+
+def test_the_database_url_stays_out_of_logs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "mysql+aiomysql://app:secret@db:3306/reviews")
+
+    assert "secret" not in repr(Settings())
 
 
 @pytest.mark.parametrize(
@@ -57,6 +77,8 @@ def test_environment_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None
         ("HTTP_SHUTDOWN_TIMEOUT", "0"),
         ("GUTENDEX_BASE_URL", "gutendex.com"),
         ("GUTENDEX_TIMEOUT", "-1"),
+        ("CATALOG_CACHE_TTL", "0"),
+        ("CATALOG_CACHE_SIZE", "0"),
     ],
 )
 def test_invalid_values_are_rejected(

@@ -1,3 +1,10 @@
+x-app: &app
+  build: .
+  image: bookreviews
+  environment:
+    LOG_LEVEL: INFO
+    DATABASE_URL: mysql+aiomysql://user:password@db:3306/bookreviews
+
 services:
 
   db:
@@ -33,14 +40,22 @@ services:
       retries: 10
       start_period: 20s
 
+  migrate:
+    <<: *app
+    command: ["bookreviews-migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+
   api:
-    build: .
-    environment:
-      LOG_LEVEL: INFO
+    <<: *app
     ports:
       - "8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/readyz')"]
       interval: 10s
       timeout: 3s
       retries: 5

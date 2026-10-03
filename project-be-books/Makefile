@@ -1,8 +1,10 @@
 .DEFAULT_GOAL := help
 
+TEST_DATABASE_URL ?= mysql+aiomysql://root:rootpassword@localhost:3306/bookreviews_test
+
 .PHONY: help
 help: ## List the available targets
-	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-8s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-9s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 .PHONY: install
 install: ## Create the virtual environment with every dependency
@@ -13,12 +15,21 @@ hooks: ## Install the git hooks: checks on commit, tests on push
 	uv run pre-commit install
 
 .PHONY: run
-run: ## Run the API on the host
+run: ## Run the API on the host (needs `make migrate` first)
 	uv run bookreviews-api
 
+.PHONY: migrate
+migrate: ## Apply the database migrations to DATABASE_URL
+	uv run bookreviews-migrate
+
 .PHONY: test
-test: ## Run the tests with coverage
+test: ## Run the unit tests with coverage
 	uv run pytest --cov
+
+.PHONY: test-all
+test-all: ## Run unit and database tests, using the MariaDB of Docker Compose
+	docker compose up --detach --wait db
+	TEST_DATABASE_URL=$(TEST_DATABASE_URL) uv run pytest --cov
 
 .PHONY: lint
 lint: ## Check formatting, lint rules and types
