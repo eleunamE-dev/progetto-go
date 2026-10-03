@@ -9,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 
 from bookreviews.app import create_app
+from bookreviews.config import Settings
 from bookreviews.logs import JsonFormatter
 
 type LogRecords = Callable[[], list[dict[str, Any]]]
@@ -16,7 +17,7 @@ type LogRecords = Callable[[], list[dict[str, Any]]]
 
 @pytest.fixture
 def app() -> FastAPI:
-    return create_app()
+    return create_app(Settings())
 
 
 @pytest.fixture

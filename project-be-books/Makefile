@@ -8,6 +8,10 @@ help: ## List the available targets
 install: ## Create the virtual environment with every dependency
 	uv sync
 
+.PHONY: hooks
+hooks: ## Install the git hooks: checks on commit, tests on push
+	uv run pre-commit install
+
 .PHONY: run
 run: ## Run the API on the host
 	uv run bookreviews-api

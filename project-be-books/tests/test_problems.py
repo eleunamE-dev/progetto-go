@@ -3,11 +3,12 @@ import pytest
 from fastapi import FastAPI, HTTPException
 
 from bookreviews.app import create_app
+from bookreviews.config import Settings
 
 
 @pytest.fixture
 def app() -> FastAPI:
-    app = create_app()
+    app = create_app(Settings())
 
     @app.get("/items/{item_id}")
     async def read_item(item_id: int, q: str) -> dict[str, object]:

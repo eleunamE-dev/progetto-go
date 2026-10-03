@@ -1,0 +1,105 @@
+{
+  "count": 6,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 1342,
+      "title": "Pride and Prejudice",
+      "authors": [
+        {
+          "name": "Austen, Jane",
+          "birth_year": 1775,
+          "death_year": 1817
+        }
+      ],
+      "summaries": [
+        "\"Pride and Prejudice\" by Jane Austen is a novel published in 1813."
+      ],
+      "editors": [],
+      "translators": [],
+      "subjects": [
+        "Courtship -- Fiction",
+        "Domestic fiction",
+        "England -- Fiction",
+        "Love stories",
+        "Sisters -- Fiction",
+        "Social classes -- Fiction",
+        "Young women -- Fiction"
+      ],
+      "bookshelves": [
+        "Best Books Ever Listings",
+        "Category: British Literature",
+        "Category: Classics of Literature",
+        "Category: Novels",
+        "Category: Romance",
+        "Harvard Classics"
+      ],
+      "languages": [
+        "en"
+      ],
+      "copyright": false,
+      "media_type": "Text",
+      "formats": {
+        "text/html": "https://www.gutenberg.org/ebooks/1342.html.images",
+        "application/epub+zip": "https://www.gutenberg.org/ebooks/1342.epub3.images",
+        "application/x-mobipocket-ebook": "https://www.gutenberg.org/ebooks/1342.kf8.images",
+        "application/rdf+xml": "https://www.gutenberg.org/ebooks/1342.rdf",
+        "image/jpeg": "https://www.gutenberg.org/cache/epub/1342/pg1342.cover.medium.jpg",
+        "application/octet-stream": "https://www.gutenberg.org/cache/epub/1342/pg1342-h.zip",
+        "text/plain; charset=utf-8": "https://www.gutenberg.org/ebooks/1342.txt.utf-8"
+      },
+      "download_count": 190246
+    },
+    {
+      "id": 37431,
+      "title": "Pride and Prejudice, a play founded on Jane Austen's novel",
+      "authors": [
+        {
+          "name": "Austen, Jane",
+          "birth_year": 1775,
+          "death_year": 1817
+        },
+        {
+          "name": "MacKaye, Steele, Mrs.",
+          "birth_year": 1845,
+          "death_year": 1924
+        }
+      ],
+      "summaries": [
+        "\"Pride and Prejudice\" by Mrs."
+      ],
+      "editors": [],
+      "translators": [],
+      "subjects": [
+        "Bennet, Elizabeth (Fictitious character) -- Drama",
+        "Courtship -- Drama",
+        "Domestic drama",
+        "England -- Drama",
+        "Sisters -- Drama",
+        "Social classes -- Drama",
+        "Young women -- Drama"
+      ],
+      "bookshelves": [
+        "Category: British Literature",
+        "Category: Plays/Films/Dramas"
+      ],
+      "languages": [
+        "en"
+      ],
+      "copyright": false,
+      "media_type": "Text",
+      "formats": {
+        "text/plain; charset=utf-8": "https://www.gutenberg.org/ebooks/37431.txt.utf-8",
+        "text/plain; charset=us-ascii": "https://www.gutenberg.org/files/37431/37431-8.txt",
+        "text/html": "https://www.gutenberg.org/ebooks/37431.html.images",
+        "application/epub+zip": "https://www.gutenberg.org/ebooks/37431.epub3.images",
+        "application/x-mobipocket-ebook": "https://www.gutenberg.org/ebooks/37431.kf8.images",
+        "application/rdf+xml": "https://www.gutenberg.org/ebooks/37431.rdf",
+        "image/jpeg": "https://www.gutenberg.org/cache/epub/37431/pg37431.cover.medium.jpg",
+        "application/octet-stream": "https://www.gutenberg.org/files/37431/37431-8.zip"
+      },
+      "download_count": 1828
+    }
+  ]
+}

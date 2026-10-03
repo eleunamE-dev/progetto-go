@@ -9,7 +9,7 @@ def run_api() -> None:
     settings = Settings()
     configure_logging(settings.log_level)
     uvicorn.run(
-        create_app(),
+        create_app(settings),
         host=settings.http_host,
         port=settings.http_port,
         log_config=None,

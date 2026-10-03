@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Mapping
 from http import HTTPStatus
 from typing import Any
@@ -5,11 +6,38 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from bookreviews.catalog import CatalogTimeoutError, CatalogUnavailableError
 from bookreviews.logs import request_id_var
 
 PROBLEM_JSON = "application/problem+json"
+
+logger = logging.getLogger("bookreviews.catalog")
+
+
+class FieldError(BaseModel):
+    field: str
+    message: str
+
+
+class ProblemDetails(BaseModel):
+    title: str
+    status: int
+    detail: str | None = None
+    instance: str
+    request_id: str | None = None
+    errors: list[FieldError] | None = None
+
+
+CATALOG_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    HTTPStatus.BAD_GATEWAY: {"model": ProblemDetails, "description": "The book catalog failed"},
+    HTTPStatus.GATEWAY_TIMEOUT: {
+        "model": ProblemDetails,
+        "description": "The book catalog did not answer in time",
+    },
+}
 
 
 def problem_response(
@@ -49,6 +77,24 @@ async def _validation_error(request: Request, exc: RequestValidationError) -> JS
     )
 
 
+async def _catalog_unavailable(request: Request, exc: CatalogUnavailableError) -> JSONResponse:
+    logger.error(
+        "book catalog request failed", extra={"error": str(exc), "cause": repr(exc.__cause__)}
+    )
+    if isinstance(exc, CatalogTimeoutError):
+        return problem_response(
+            HTTPStatus.GATEWAY_TIMEOUT,
+            request.url.path,
+            "the book catalog did not answer in time, try again later",
+        )
+    return problem_response(
+        HTTPStatus.BAD_GATEWAY,
+        request.url.path,
+        "the book catalog is not available, try again later",
+    )
+
+
 def register_problem_handlers(app: FastAPI) -> None:
     app.exception_handler(StarletteHTTPException)(_http_exception)
     app.exception_handler(RequestValidationError)(_validation_error)
+    app.exception_handler(CatalogUnavailableError)(_catalog_unavailable)

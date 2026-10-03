@@ -1,0 +1,101 @@
+{
+  "count": 231,
+  "next": "https://gutendex.com/books/?page=2&search=dickens",
+  "previous": null,
+  "results": [
+    {
+      "id": 98,
+      "title": "A Tale of Two Cities",
+      "authors": [
+        {
+          "name": "Dickens, Charles",
+          "birth_year": 1812,
+          "death_year": 1870
+        }
+      ],
+      "summaries": [
+        "\"A Tale of Two Cities\" by Charles Dickens is a historical novel published in 1859."
+      ],
+      "editors": [],
+      "translators": [],
+      "subjects": [
+        "British -- France -- Paris -- Fiction",
+        "Executions and executioners -- Fiction",
+        "France -- History -- Revolution, 1789-1799 -- Fiction",
+        "French -- England -- London -- Fiction",
+        "Historical fiction",
+        "London (England) -- History -- 18th century -- Fiction",
+        "Lookalikes -- Fiction",
+        "Paris (France) -- History -- 1789-1799 -- Fiction",
+        "War stories"
+      ],
+      "bookshelves": [
+        "Category: British Literature",
+        "Category: Classics of Literature",
+        "Category: Historical Novels",
+        "Historical Fiction"
+      ],
+      "languages": [
+        "en"
+      ],
+      "copyright": false,
+      "media_type": "Text",
+      "formats": {
+        "text/html": "https://www.gutenberg.org/ebooks/98.html.images",
+        "application/epub+zip": "https://www.gutenberg.org/ebooks/98.epub3.images",
+        "application/x-mobipocket-ebook": "https://www.gutenberg.org/ebooks/98.kf8.images",
+        "application/rdf+xml": "https://www.gutenberg.org/ebooks/98.rdf",
+        "image/jpeg": "https://www.gutenberg.org/cache/epub/98/pg98.cover.medium.jpg",
+        "application/octet-stream": "https://www.gutenberg.org/cache/epub/98/pg98-h.zip",
+        "text/plain; charset=utf-8": "https://www.gutenberg.org/ebooks/98.txt.utf-8"
+      },
+      "download_count": 50704
+    },
+    {
+      "id": 47530,
+      "title": "Oliver Twist, Vol. 2 (of 3)",
+      "authors": [
+        {
+          "name": "Dickens, Charles",
+          "birth_year": 1812,
+          "death_year": 1870
+        }
+      ],
+      "summaries": [
+        "\"Oliver Twist, Vol."
+      ],
+      "editors": [],
+      "translators": [],
+      "subjects": [
+        "Bildungsromans",
+        "Boys -- Fiction",
+        "Criminals -- Fiction",
+        "Kidnapping victims -- Fiction",
+        "London (England) -- Fiction",
+        "Orphans -- Fiction"
+      ],
+      "bookshelves": [
+        "Category: British Literature",
+        "Category: Classics of Literature",
+        "Category: Crime, Thrillers and Mystery",
+        "Category: Novels"
+      ],
+      "languages": [
+        "en"
+      ],
+      "copyright": false,
+      "media_type": "Text",
+      "formats": {
+        "text/html": "https://www.gutenberg.org/ebooks/47530.html.images",
+        "application/epub+zip": "https://www.gutenberg.org/ebooks/47530.epub3.images",
+        "application/x-mobipocket-ebook": "https://www.gutenberg.org/ebooks/47530.kf8.images",
+        "application/rdf+xml": "https://www.gutenberg.org/ebooks/47530.rdf",
+        "image/jpeg": "https://www.gutenberg.org/cache/epub/47530/pg47530.cover.medium.jpg",
+        "application/octet-stream": "https://www.gutenberg.org/cache/epub/47530/pg47530-h.zip",
+        "text/plain; charset=utf-8": "https://www.gutenberg.org/ebooks/47530.txt.utf-8",
+        "text/plain; charset=us-ascii": "https://www.gutenberg.org/files/47530/47530-0.txt"
+      },
+      "download_count": 42032
+    }
+  ]
+}
