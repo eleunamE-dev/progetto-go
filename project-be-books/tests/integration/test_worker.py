@@ -78,6 +78,7 @@ async def pending_review(repository: SqlReviewRepository, created_at: datetime) 
         status=ReviewStatus.PENDING,
         created_at=created_at,
         updated_at=created_at,
+        owner="tests",
     )
     await repository.add(review)
     return review

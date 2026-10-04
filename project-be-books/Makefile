@@ -2,6 +2,7 @@
 
 TEST_DATABASE_URL ?= mysql+aiomysql://root:rootpassword@localhost:3306/bookreviews_test
 TEST_RABBITMQ_URL ?= amqp://user:password@localhost:5672/
+MIGRATION_DATABASE_URL ?= mysql+aiomysql://migrator:migrator-password@localhost:3306/bookreviews
 
 .PHONY: help
 help: ## List the available targets
@@ -24,8 +25,8 @@ worker: ## Run the enrichment worker on the host
 	uv run bookreviews-worker
 
 .PHONY: migrate
-migrate: ## Apply the database migrations to DATABASE_URL
-	uv run bookreviews-migrate
+migrate: ## Apply the database migrations, as the migrator account
+	DATABASE_URL=$(MIGRATION_DATABASE_URL) uv run bookreviews-migrate
 
 .PHONY: test
 test: ## Run the unit tests with coverage

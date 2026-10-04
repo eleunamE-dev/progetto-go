@@ -8,10 +8,14 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
+from bookreviews.auth import Client
 from bookreviews.books import get_catalog
 from bookreviews.catalog import Book, BookCatalog, BookNotFoundError
 from bookreviews.problems import (
+    AUTHENTICATION_RESPONSES,
+    BODY_TOO_LARGE_RESPONSES,
     CATALOG_ERROR_RESPONSES,
+    OWNERSHIP_RESPONSES,
     SERVICE_UNAVAILABLE_RESPONSES,
     VALIDATION_ERROR_RESPONSES,
     ProblemDetails,
@@ -160,13 +164,20 @@ REVIEW_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 @router.post(
     "",
     status_code=HTTPStatus.ACCEPTED,
-    responses={**VALIDATION_ERROR_RESPONSES, **CATALOG_ERROR_RESPONSES},
+    responses={
+        **AUTHENTICATION_RESPONSES,
+        **BODY_TOO_LARGE_RESPONSES,
+        **VALIDATION_ERROR_RESPONSES,
+        **CATALOG_ERROR_RESPONSES,
+    },
 )
 async def submit_review(
-    submission: ReviewSubmission, service: Service, response: Response
+    client: Client, submission: ReviewSubmission, service: Service, response: Response
 ) -> ReviewResponse:
     try:
-        review = await service.submit(submission.id, submission.review, submission.score)
+        review = await service.submit(
+            submission.id, submission.review, submission.score, owner=client
+        )
     except BookNotFoundError:
         raise RequestValidationError(
             [
@@ -200,14 +211,26 @@ async def get_review(review_id: uuid.UUID, service: Service, response: Response)
     return ReviewResponse.from_review(review)
 
 
-@router.put("/{review_id}", responses=REVIEW_ERROR_RESPONSES)
+@router.put(
+    "/{review_id}",
+    responses={
+        **AUTHENTICATION_RESPONSES,
+        **OWNERSHIP_RESPONSES,
+        **BODY_TOO_LARGE_RESPONSES,
+        **REVIEW_ERROR_RESPONSES,
+    },
+)
 async def update_review(
-    review_id: uuid.UUID, changes: ReviewChanges, service: Service
+    client: Client, review_id: uuid.UUID, changes: ReviewChanges, service: Service
 ) -> ReviewResponse:
-    review = await service.update(review_id, changes.review, changes.score)
+    review = await service.update(review_id, changes.review, changes.score, client)
     return ReviewResponse.from_review(review)
 
 
-@router.delete("/{review_id}", status_code=HTTPStatus.NO_CONTENT, responses=REVIEW_ERROR_RESPONSES)
-async def delete_review(review_id: uuid.UUID, service: Service) -> None:
-    await service.delete(review_id)
+@router.delete(
+    "/{review_id}",
+    status_code=HTTPStatus.NO_CONTENT,
+    responses={**AUTHENTICATION_RESPONSES, **OWNERSHIP_RESPONSES, **REVIEW_ERROR_RESPONSES},
+)
+async def delete_review(client: Client, review_id: uuid.UUID, service: Service) -> None:
+    await service.delete(review_id, client)

@@ -13,6 +13,7 @@ from bookreviews.config import Settings
 from bookreviews.database import SqlReviewRepository, create_engine, create_sessions
 from bookreviews.review_service import Review, ReviewStatus
 from bookreviews.reviews import get_review_queue, get_review_repository
+from tests.conftest import CLIENT, OTHER_API_KEY, OTHER_CLIENT, LogRecords
 from tests.fakes import FakeCatalog, FakeQueue, FakeReviewRepository
 
 PRIDE_AND_PREJUDICE = Book(
@@ -30,7 +31,9 @@ CREATED_AT = datetime(2026, 10, 3, 12, 0, tzinfo=UTC)
 VALID = {"id": 1342, "review": "A classic.", "score": 9}
 
 
-def stored_review(status: ReviewStatus = ReviewStatus.PENDING, book: Book | None = None) -> Review:
+def stored_review(
+    status: ReviewStatus = ReviewStatus.PENDING, book: Book | None = None, owner: str = CLIENT
+) -> Review:
     return Review(
         id=uuid.uuid7(),
         book_id=1342,
@@ -39,6 +42,7 @@ def stored_review(status: ReviewStatus = ReviewStatus.PENDING, book: Book | None
         status=status,
         created_at=CREATED_AT,
         updated_at=CREATED_AT,
+        owner=owner,
         book=book,
     )
 
@@ -59,8 +63,13 @@ def queue() -> FakeQueue:
 
 
 @pytest.fixture
-def app(repository: FakeReviewRepository, catalog: FakeCatalog, queue: FakeQueue) -> FastAPI:
-    app = create_app(Settings())
+def app(
+    settings: Settings,
+    repository: FakeReviewRepository,
+    catalog: FakeCatalog,
+    queue: FakeQueue,
+) -> FastAPI:
+    app = create_app(settings)
     app.dependency_overrides[get_review_repository] = lambda: repository
     app.dependency_overrides[get_catalog] = lambda: catalog
     app.dependency_overrides[get_review_queue] = lambda: queue
@@ -87,6 +96,7 @@ async def test_submit_review(
         "book": None,
     }
     assert repository.reviews[review_id].content == "A classic."
+    assert repository.reviews[review_id].owner == CLIENT
     assert queue.enqueued == [review_id]
 
 
@@ -346,11 +356,98 @@ async def test_delete_unknown_review(client: httpx.AsyncClient) -> None:
     assert response.status_code == 404
 
 
+@pytest.mark.parametrize("headers", [{}, {"X-API-Key": ""}, {"X-API-Key": "wrong-key"}])
+async def test_writes_need_a_valid_api_key(
+    anonymous: httpx.AsyncClient, repository: FakeReviewRepository, headers: dict[str, str]
+) -> None:
+    review = stored_review()
+    await repository.add(review)
+
+    responses = [
+        await anonymous.post("/review", json=VALID, headers=headers),
+        await anonymous.put(
+            f"/review/{review.id}", json={"review": "Changed.", "score": 1}, headers=headers
+        ),
+        await anonymous.delete(f"/review/{review.id}", headers=headers),
+        await anonymous.delete("/review/not-a-uuid", headers=headers),
+    ]
+
+    for response in responses:
+        assert response.status_code == 401
+        assert response.headers["www-authenticate"] == "ApiKey"
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.json()["detail"] == "a valid X-API-Key header is required"
+    assert repository.reviews == {review.id: review}
+
+
+async def test_reading_a_review_needs_no_api_key(
+    anonymous: httpx.AsyncClient, repository: FakeReviewRepository
+) -> None:
+    review = stored_review(ReviewStatus.COMPLETED, PRIDE_AND_PREJUDICE)
+    await repository.add(review)
+
+    response = await anonymous.get(f"/review/{review.id}")
+
+    assert response.status_code == 200
+
+
+async def test_only_the_owner_changes_a_review(
+    client: httpx.AsyncClient, repository: FakeReviewRepository
+) -> None:
+    review = stored_review(owner=OTHER_CLIENT)
+    await repository.add(review)
+
+    put = await client.put(f"/review/{review.id}", json={"review": "Changed.", "score": 1})
+    delete = await client.delete(f"/review/{review.id}")
+
+    for response in (put, delete):
+        assert response.status_code == 403
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.json()["detail"] == f"review {review.id} belongs to another client"
+    assert repository.reviews == {review.id: review}
+
+
+async def test_each_client_writes_with_its_own_key(
+    client: httpx.AsyncClient, repository: FakeReviewRepository
+) -> None:
+    review = stored_review(owner=OTHER_CLIENT)
+    await repository.add(review)
+
+    response = await client.delete(f"/review/{review.id}", headers={"X-API-Key": OTHER_API_KEY})
+
+    assert response.status_code == 204
+    assert repository.reviews == {}
+
+
+async def test_the_client_is_logged(client: httpx.AsyncClient, json_logs: LogRecords) -> None:
+    response = await client.post("/review", json=VALID)
+
+    [record] = [r for r in json_logs() if r["msg"] == "http request"]
+    assert record["client"] == CLIENT
+    assert record["request_id"] == response.headers["x-request-id"]
+
+
+async def test_anonymous_requests_log_no_client(
+    anonymous: httpx.AsyncClient, json_logs: LogRecords
+) -> None:
+    await anonymous.get(f"/review/{uuid.uuid7()}")
+
+    [record] = [r for r in json_logs() if r["msg"] == "http request"]
+    assert "client" not in record
+
+
 async def test_reviews_are_documented(client: httpx.AsyncClient) -> None:
     paths = (await client.get("/openapi.json")).json()["paths"]
 
     assert set(paths["/review"]) == {"post"}
     assert set(paths["/review/{review_id}"]) == {"get", "put", "delete"}
+    post, review = paths["/review"]["post"], paths["/review/{review_id}"]
+    assert post["security"] == [{"ApiKey": []}]
+    assert review["put"]["security"] == review["delete"]["security"] == [{"ApiKey": []}]
+    assert "security" not in review["get"]
+    assert {"401", "413"} <= post["responses"].keys()
+    assert {"401", "403", "413"} <= review["put"]["responses"].keys()
+    assert {"401", "403"} <= review["delete"]["responses"].keys()
     assert {"200", "202", "404", "503"} <= paths["/review/{review_id}"]["get"]["responses"].keys()
     assert "503" in paths["/review"]["post"]["responses"]
 

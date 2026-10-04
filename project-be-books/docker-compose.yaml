@@ -1,10 +1,12 @@
+x-environment: &environment
+  LOG_LEVEL: INFO
+  DATABASE_URL: mysql+aiomysql://app:app-password@db:3306/bookreviews
+  RABBITMQ_URL: amqp://user:password@rabbitmq:5672/
+
 x-app: &app
   build: .
   image: bookreviews
-  environment:
-    LOG_LEVEL: INFO
-    DATABASE_URL: mysql+aiomysql://user:password@db:3306/bookreviews
-    RABBITMQ_URL: amqp://user:password@rabbitmq:5672/
+  environment: *environment
 
 services:
 
@@ -13,12 +15,11 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_DATABASE: bookreviews
-      MYSQL_USER: user
-      MYSQL_PASSWORD: password
     ports:
       - "3306:3306"
     volumes:
       - db-data:/var/lib/mysql
+      - ./deploy/mariadb/users.sql:/docker-entrypoint-initdb.d/users.sql:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
@@ -44,12 +45,18 @@ services:
   migrate:
     <<: *app
     command: ["bookreviews-migrate"]
+    environment:
+      <<: *environment
+      DATABASE_URL: mysql+aiomysql://migrator:migrator-password@db:3306/bookreviews
     depends_on:
       db:
         condition: service_healthy
 
   api:
     <<: *app
+    environment:
+      <<: *environment
+      API_KEYS: '{"local-dev": "ed5a18fb8f807f996d649e379d3f35f39c543a91bdbf88c492f2ebd10d4df86c"}'
     ports:
       - "8080:8080"
     depends_on:

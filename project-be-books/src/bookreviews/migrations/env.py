@@ -1,11 +1,11 @@
 import asyncio
 
 from alembic import context
-from sqlalchemy import Connection
+from sqlalchemy import Connection, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from bookreviews.config import Settings
-from bookreviews.database import Base
+from bookreviews.database import MIGRATION_LOCK_TIMEOUT, Base
 
 
 def database_url() -> str:
@@ -16,9 +16,21 @@ def database_url() -> str:
 
 
 def run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=Base.metadata)
-    with context.begin_transaction():
-        context.run_migrations()
+    lock = f"migrations.{connection.engine.url.database}"[:64]
+    timeout = context.config.attributes.get("lock_timeout", MIGRATION_LOCK_TIMEOUT)
+    acquired = connection.scalar(
+        text("SELECT GET_LOCK(:lock, :timeout)"), {"lock": lock, "timeout": timeout}
+    )
+    connection.commit()
+    if acquired != 1:
+        raise RuntimeError(f"another migration held the lock {lock!r} for more than {timeout} s")
+    try:
+        context.configure(connection=connection, target_metadata=Base.metadata)
+        with context.begin_transaction():
+            context.run_migrations()
+    finally:
+        connection.execute(text("SELECT RELEASE_LOCK(:lock)"), {"lock": lock})
+        connection.commit()
 
 
 async def run_async_migrations() -> None:

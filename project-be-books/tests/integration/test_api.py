@@ -15,8 +15,8 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def app(repository: SqlReviewRepository, engine: AsyncEngine) -> FastAPI:
-    app = create_app(Settings())
+def app(settings: Settings, repository: SqlReviewRepository, engine: AsyncEngine) -> FastAPI:
+    app = create_app(settings)
     catalog = FakeCatalog(books={1342: Book(id=1342, title="Pride and Prejudice")})
     app.dependency_overrides[get_review_repository] = lambda: repository
     app.dependency_overrides[get_catalog] = lambda: catalog

@@ -26,12 +26,19 @@ class Review:
     status: ReviewStatus
     created_at: datetime
     updated_at: datetime
+    owner: str
     book: Book | None = None
 
 
 class ReviewNotFoundError(Exception):
     def __init__(self, review_id: uuid.UUID) -> None:
         super().__init__(f"review {review_id} not found")
+        self.review_id = review_id
+
+
+class ReviewForbiddenError(Exception):
+    def __init__(self, review_id: uuid.UUID) -> None:
+        super().__init__(f"review {review_id} belongs to another client")
         self.review_id = review_id
 
 
@@ -72,7 +79,7 @@ class ReviewService:
         self._queue = queue
         self._clock = clock
 
-    async def submit(self, book_id: int, content: str, score: int) -> Review:
+    async def submit(self, book_id: int, content: str, score: int, owner: str) -> Review:
         await self._catalog.get_book(book_id)
         now = self._clock()
         review = Review(
@@ -83,6 +90,7 @@ class ReviewService:
             status=ReviewStatus.PENDING,
             created_at=now,
             updated_at=now,
+            owner=owner,
         )
         await self._repository.add(review)
         try:
@@ -100,7 +108,8 @@ class ReviewService:
             raise ReviewNotFoundError(review_id)
         return review
 
-    async def update(self, review_id: uuid.UUID, content: str, score: int) -> Review:
+    async def update(self, review_id: uuid.UUID, content: str, score: int, client: str) -> Review:
+        await self._check_owner(review_id, client)
         review = await self._repository.update(
             review_id, content=content, score=score, updated_at=self._clock()
         )
@@ -108,6 +117,11 @@ class ReviewService:
             raise ReviewNotFoundError(review_id)
         return review
 
-    async def delete(self, review_id: uuid.UUID) -> None:
+    async def delete(self, review_id: uuid.UUID, client: str) -> None:
+        await self._check_owner(review_id, client)
         if not await self._repository.delete(review_id):
             raise ReviewNotFoundError(review_id)
+
+    async def _check_owner(self, review_id: uuid.UUID, client: str) -> None:
+        if (await self.get(review_id)).owner != client:
+            raise ReviewForbiddenError(review_id)

@@ -9,6 +9,7 @@ Python 3.14, FastAPI, MariaDB, RabbitMQ. The original assignment is in [ASSIGNME
 - [Quick start](#quick-start)
 - [A tour of the API](#a-tour-of-the-api)
 - [Endpoints](#endpoints)
+- [Authentication](#authentication)
 - [How it works](#how-it-works)
 - [Design notes](#design-notes)
 - [Configuration](#configuration)
@@ -27,8 +28,16 @@ the enrichment worker. Then:
 
 - API: http://localhost:8080, with interactive documentation at http://localhost:8080/docs
 - RabbitMQ management: http://localhost:15672 (`user` / `password`)
+- API key for writing reviews: `local-dev-key` (client `local-dev`)
 
 `docker compose down` stops everything; add `-v` to delete the database volume too.
+
+The database accounts are created by [deploy/mariadb/users.sql](deploy/mariadb/users.sql) the first
+time the volume is initialised. On a volume created before that script existed, apply it once:
+
+```bash
+docker compose exec -T db mariadb -uroot -prootpassword < deploy/mariadb/users.sql
+```
 
 ## A tour of the API
 
@@ -56,10 +65,12 @@ curl "localhost:8080/book/search?q=pride%20prejudice"
 }
 ```
 
-Review it, using the `id` of the book. The answer is `202 Accepted` with the address of the review:
+Review it, using the `id` of the book. Writing needs an API key; the answer is `202 Accepted` with
+the address of the review:
 
 ```bash
 curl -i -X POST localhost:8080/review \
+  -H "X-API-Key: local-dev-key" \
   -H "Content-Type: application/json" \
   -d '{"id": 1342, "review": "A classic.", "score": 9}'
 ```
@@ -105,13 +116,15 @@ curl -i localhost:8080/review/01a1023f-006d-716b-abee-f6d3e9210156
 }
 ```
 
-Change it, then delete it:
+Change it, then delete it, with the key of the client that wrote it:
 
 ```bash
 curl -X PUT localhost:8080/review/01a1023f-006d-716b-abee-f6d3e9210156 \
+  -H "X-API-Key: local-dev-key" \
   -H "Content-Type: application/json" \
   -d '{"review": "Even better the second time.", "score": 10}'
-curl -X DELETE localhost:8080/review/01a1023f-006d-716b-abee-f6d3e9210156
+curl -X DELETE localhost:8080/review/01a1023f-006d-716b-abee-f6d3e9210156 \
+  -H "X-API-Key: local-dev-key"
 ```
 
 ## Endpoints
@@ -119,15 +132,18 @@ curl -X DELETE localhost:8080/review/01a1023f-006d-716b-abee-f6d3e9210156
 | Endpoint | Success | Errors |
 |---|---|---|
 | `GET /book/search?q={keywords}&page={n}` | 200 | 422 invalid parameters, 404 page past the end, 502/503/504 Gutendex |
-| `POST /review` | 202 and `Location` | 422 invalid body or unknown book, 502/503/504 Gutendex, 503 database |
+| `POST /review` 🔑 | 202 and `Location` | 401, 413, 422 invalid body or unknown book, 502/503/504 Gutendex, 503 database |
 | `GET /review/{id}` | 202 while `pending`, 200 once `completed` or `failed` | 404, 422 malformed ID, 503 database |
-| `PUT /review/{id}` | 200 | 404, 422, 503 database |
-| `DELETE /review/{id}` | 204 | 404, 422 malformed ID, 503 database |
+| `PUT /review/{id}` 🔑 | 200 | 401, 403, 404, 413, 422, 503 database |
+| `DELETE /review/{id}` 🔑 | 204 | 401, 403, 404, 422 malformed ID, 503 database |
 | `GET /healthz` | 200: the process is up | |
 | `GET /readyz` | 200: the database is reachable | 503 |
 
+🔑 needs an `X-API-Key` header, see [Authentication](#authentication). Reading and searching are
+public.
+
 A 503 carries `Retry-After`: the database is unreachable, or calls to Gutendex are suspended after
-repeated failures or because too many are already in progress.
+repeated failures or because too many are already in progress. A body larger than 64 KiB gets 413.
 
 **Search.** `q` holds the words to look for in titles and author names (at most 200 characters);
 results come 32 per page, the most downloaded first.
@@ -157,6 +173,37 @@ A review is `failed` when its book is no longer in the catalog by the time the w
 
 The OpenAPI document is served at `/openapi.json` and kept in [docs/openapi.json](docs/openapi.json);
 a test fails when the two differ.
+
+## Authentication
+
+The service is meant to be called by other applications. Each one is a client with a name and an
+API key, sent in the `X-API-Key` header to create, change or delete reviews.
+
+- **Ownership.** A review belongs to the client that wrote it: another client gets 403 when it tries
+  to change or delete it. Reviews written before API keys existed belong to `anonymous`, a client
+  that exists only if someone configures it.
+- **Keys at rest.** The service stores only the SHA-256 digest of each key, in `API_KEYS`, and
+  compares digests in constant time. A key is a 256-bit random value, so a fast hash is enough.
+- **New keys.** `bookreviews-api-key NAME` prints a new key for the client `NAME`, to hand over, and
+  the entry to add to `API_KEYS`:
+
+  ```bash
+  docker compose run --rm --no-deps api bookreviews-api-key web-shop
+  ```
+
+  ```text
+  API key for web-shop; hand it to the client, it is not stored anywhere:
+    bkr_3V0zvq8G6cJ1pKf9wQ2xYbN7dLmA4sTeR5uHiOjKlZc
+  Entry to add to API_KEYS:
+    "web-shop": "1f0b4b5c8e3d2a7f9c6e5d4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f"
+  ```
+
+  `API_KEYS` is a JSON object from client names to digests, for example
+  `{"web-shop": "1f0b…", "mobile-app": "9a8b…"}`.
+- **Rotation.** A client may have several keys, `{"web-shop": ["1f0b…", "77c2…"]}`. To rotate a
+  key, add the new digest next to the old one, let the client switch, then remove the old digest.
+  The client's name doesn't change, so it keeps its reviews.
+- **Logs.** Every log line of an authenticated request carries the client's name.
 
 ## How it works
 
@@ -189,6 +236,7 @@ src/bookreviews/
 ├── catalog.py          book types, BookCatalog protocol, in-memory cache, circuit breaker
 ├── gutendex.py         Gutendex client
 ├── wiring.py           database engine and catalog built from the settings
+├── auth.py             API keys: X-API-Key check, key generator (bookreviews-api-key)
 ├── database.py         SQLAlchemy models and repository
 ├── migrations/         Alembic migrations
 ├── queue.py            RabbitMQ topology and publisher
@@ -262,6 +310,9 @@ The design follows from that:
 - **Access and migrations.** MariaDB is accessed through SQLAlchemy 2 (async, aiomysql). Alembic
   manages the schema, applied by `bookreviews-migrate`, which is the `migrate` service in Compose.
   A test runs `alembic check`, so the models and the migrations cannot drift apart.
+- **One migration at a time.** `bookreviews-migrate` holds a MariaDB named lock while it runs, so
+  two copies started together (two deploys, a retried job) run one after the other; the second
+  finds nothing left to do. It gives up after waiting 10 minutes.
 - **Review IDs.** IDs are UUIDv7. They cannot be guessed, the API creates them without a round trip
   to the database, and they are time-ordered, so inserts append to the InnoDB index. They are
   stored in MariaDB's native `UUID` type.
@@ -283,9 +334,37 @@ The design follows from that:
 - **Health.** `/healthz` is a liveness check; `/readyz` also checks the database. RabbitMQ is not
   part of readiness: without it the API still accepts reviews, and the sweeper queues them later.
 
+### Security
+
+- **Clients.** Writes need an API key and reviews belong to the client that wrote them, see
+  [Authentication](#authentication). Reads stay public, like the reviews themselves.
+- **Least privilege in the database.** Two accounts: `migrator` owns the schema and is used only by
+  `bookreviews-migrate`; the API and the worker connect as `app`, which can read and write rows but
+  cannot create, alter or drop anything.
+- **Request limits.** Bodies over 64 KiB are refused with 413: at once when they declare a larger
+  `Content-Length`, as soon as they cross the limit when they are streamed. Review texts are at
+  most 5000 characters, so real requests stay far below it.
+- **Response headers.** Every response carries `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and, unless the endpoint sets its own,
+  `Cache-Control: no-store`. JSON responses also get `Content-Security-Policy: default-src 'none';
+  frame-ancestors 'none'`. The HTML of `/docs` is left without one, so Swagger UI can load its
+  scripts. HSTS belongs to whatever terminates TLS in front of the service.
+- **Browsers.** CORS is off unless `CORS_ALLOW_ORIGINS` lists the origins of the web applications
+  that call the API; the interactive documentation can be turned off with `API_DOCS_ENABLED=false`.
+- **Secrets.** Connection URLs are kept as secrets and API keys as digests, so neither appears in
+  logs or in a printed configuration.
+- **Image.** The container runs as an unprivileged user, gets the Debian security updates at build
+  time, and has no `pip`: the application never installs anything at run time. CI scans the image
+  with Trivy and fails on any fixable vulnerability rated high or critical.
+- **Dependencies.** pip-audit checks the locked Python dependencies in CI. Dependabot proposes
+  weekly updates of the Python packages, base images, GitHub Actions and pre-commit hooks, and
+  waits 7 days after a release before proposing it, to keep clear of short-lived malicious
+  releases.
+
 ### Left out
 
-- Authentication and per-user reviews, rate limiting.
+- Rate limiting: it belongs in front of the service (ingress or API gateway), which sees every
+  instance and the client's address.
 - An endpoint to list reviews, for instance per book (the database already indexes `book_id`).
 - Metrics and tracing (Prometheus, OpenTelemetry).
 - A cache shared by several API instances (e.g. Redis).
@@ -302,7 +381,11 @@ Every setting has a default that works with the Compose services on `localhost`.
 | `HTTP_HOST` | `0.0.0.0` | API |
 | `HTTP_PORT` | `8080` | API |
 | `HTTP_SHUTDOWN_TIMEOUT` | `15` | seconds left to running requests on shutdown |
-| `DATABASE_URL` | `mysql+aiomysql://user:password@localhost:3306/bookreviews` | |
+| `HTTP_MAX_BODY_SIZE` | `65536` | bytes; a larger request body gets 413 |
+| `API_KEYS` | `{}` | JSON object from client names to key digests, see [Authentication](#authentication); empty means every write is refused |
+| `API_DOCS_ENABLED` | `true` | serve `/docs`, `/redoc` and `/openapi.json` |
+| `CORS_ALLOW_ORIGINS` | `[]` | JSON list of the origins allowed to call the API from a browser, e.g. `["https://shop.example.com"]` |
+| `DATABASE_URL` | `mysql+aiomysql://app:app-password@localhost:3306/bookreviews` | the migrations need an account that can change the schema |
 | `DATABASE_POOL_SIZE` | `5` | connections each process keeps open |
 | `DATABASE_MAX_OVERFLOW` | `10` | extra connections opened under load |
 | `DATABASE_POOL_TIMEOUT` | `10` | seconds a request waits for a free connection |
@@ -331,7 +414,7 @@ services and the integration tests. `make` lists the tasks; these are the comman
 |---|---|
 | Install the dependencies | `uv sync` |
 | Start MariaDB and RabbitMQ | `docker compose up --detach --wait db rabbitmq` |
-| Apply the migrations | `uv run bookreviews-migrate` |
+| Apply the migrations | `make migrate` (as the `migrator` account) |
 | Run the API / the worker | `uv run bookreviews-api` / `uv run bookreviews-worker` |
 | Unit tests | `uv run pytest --cov` |
 | All the tests | `make test-all` |
@@ -355,4 +438,6 @@ commit, and the tests before every push.
 **CI.** GitHub Actions runs on every change to this folder:
 - ruff, mypy and pip-audit;
 - the whole test suite against MariaDB and RabbitMQ service containers;
-- a smoke test of the Docker image.
+- a smoke test of the Docker image and a Trivy scan of it.
+
+Dependabot proposes the dependency updates, see [Security](#security).

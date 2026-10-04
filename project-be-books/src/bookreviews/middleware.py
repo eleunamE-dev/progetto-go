@@ -5,12 +5,14 @@ import uuid
 from http import HTTPStatus
 
 from starlette.datastructures import Headers, MutableHeaders
+from starlette.exceptions import HTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from bookreviews.logs import request_id_var
+from bookreviews.logs import client_var, request_id_var
 from bookreviews.problems import problem_response
 
 REQUEST_ID_HEADER = "X-Request-ID"
+CONTENT_SECURITY_POLICY = "default-src 'none'; frame-ancestors 'none'"
 
 _VALID_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
@@ -30,6 +32,7 @@ class RequestContextMiddleware:
         if not _VALID_REQUEST_ID.fullmatch(request_id):
             request_id = uuid.uuid4().hex
         token = request_id_var.set(request_id)
+        client_token = client_var.set(None)
         start = time.perf_counter()
         status = HTTPStatus.INTERNAL_SERVER_ERROR.value
         response_started = False
@@ -61,4 +64,58 @@ class RequestContextMiddleware:
                     "duration_ms": round((time.perf_counter() - start) * 1000, 3),
                 },
             )
+            client_var.reset(client_token)
             request_id_var.reset(token)
+
+
+class BodySizeLimitMiddleware:
+    def __init__(self, app: ASGIApp, max_size: int) -> None:
+        self.app = app
+        self.max_size = max_size
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        detail = f"the request body must not exceed {self.max_size} bytes"
+        length = Headers(scope=scope).get("content-length", "")
+        if length.isdigit() and int(length) > self.max_size:
+            response = problem_response(HTTPStatus.CONTENT_TOO_LARGE, scope["path"], detail)
+            await response(scope, receive, send)
+            return
+        received = 0
+
+        async def limited_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_size:
+                    raise HTTPException(HTTPStatus.CONTENT_TOO_LARGE, detail)
+            return message
+
+        await self.app(scope, limited_receive, send)
+
+
+class SecurityHeadersMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers.setdefault("X-Content-Type-Options", "nosniff")
+                headers.setdefault("X-Frame-Options", "DENY")
+                headers.setdefault("Referrer-Policy", "no-referrer")
+                headers.setdefault("Cache-Control", "no-store")
+                if not headers.get("content-type", "").startswith("text/html"):
+                    headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)

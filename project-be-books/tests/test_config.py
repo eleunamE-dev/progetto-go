@@ -1,13 +1,21 @@
 import pytest
 from pydantic import ValidationError
 
+from bookreviews.auth import key_digest
 from bookreviews.config import Settings
+
+DIGEST = key_digest("web-app-key")
+OTHER_DIGEST = key_digest("batch-key")
 
 VARIABLES = (
     "LOG_LEVEL",
     "HTTP_HOST",
     "HTTP_PORT",
     "HTTP_SHUTDOWN_TIMEOUT",
+    "HTTP_MAX_BODY_SIZE",
+    "API_KEYS",
+    "API_DOCS_ENABLED",
+    "CORS_ALLOW_ORIGINS",
     "DATABASE_URL",
     "DATABASE_POOL_SIZE",
     "DATABASE_MAX_OVERFLOW",
@@ -43,8 +51,12 @@ def test_defaults_need_no_configuration() -> None:
     assert settings.http_host == "0.0.0.0"  # noqa: S104
     assert settings.http_port == 8080
     assert settings.http_shutdown_timeout == 15
+    assert settings.http_max_body_size == 65_536
+    assert settings.api_keys == {}
+    assert settings.api_docs_enabled
+    assert settings.cors_allow_origins == []
     assert settings.database_url.get_secret_value() == (
-        "mysql+aiomysql://user:password@localhost:3306/bookreviews"
+        "mysql+aiomysql://app:app-password@localhost:3306/bookreviews"
     )
     assert settings.database_pool_size == 5
     assert settings.database_max_overflow == 10
@@ -118,11 +130,31 @@ def test_environment_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.worker_shutdown_timeout == 5
 
 
-def test_connection_urls_stay_out_of_logs(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_environment_sets_the_http_security_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HTTP_MAX_BODY_SIZE", "1024")
+    monkeypatch.setenv("API_KEYS", f'{{"web-app": "{DIGEST}", "batch-2": "{OTHER_DIGEST}"}}')
+    monkeypatch.setenv("API_DOCS_ENABLED", "false")
+    monkeypatch.setenv(
+        "CORS_ALLOW_ORIGINS", '["https://reviews.example.com", "http://localhost:3000"]'
+    )
+
+    settings = Settings()
+
+    assert settings.http_max_body_size == 1024
+    assert settings.api_keys == {"web-app": [DIGEST], "batch-2": [OTHER_DIGEST]}
+    assert not settings.api_docs_enabled
+    assert settings.cors_allow_origins == ["https://reviews.example.com", "http://localhost:3000"]
+
+
+def test_secrets_stay_out_of_logs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", "mysql+aiomysql://app:secret@db:3306/reviews")
     monkeypatch.setenv("RABBITMQ_URL", "amqp://app:secret@broker:5672/")
+    monkeypatch.setenv("API_KEYS", f'{{"web-app": "{DIGEST}"}}')
 
-    assert "secret" not in repr(Settings())
+    shown = repr(Settings())
+
+    assert "secret" not in shown
+    assert DIGEST not in shown
 
 
 @pytest.mark.parametrize(
@@ -132,6 +164,16 @@ def test_connection_urls_stay_out_of_logs(monkeypatch: pytest.MonkeyPatch) -> No
         ("HTTP_PORT", "http"),
         ("HTTP_PORT", "0"),
         ("HTTP_SHUTDOWN_TIMEOUT", "0"),
+        ("HTTP_MAX_BODY_SIZE", "0"),
+        ("API_KEYS", f'{{"Web App": "{DIGEST}"}}'),
+        ("API_KEYS", f'{{"-web": "{DIGEST}"}}'),
+        ("API_KEYS", '{"web-app": "not-a-sha256-digest"}'),
+        ("API_KEYS", '{"web-app": []}'),
+        ("API_KEYS", '["web-app"]'),
+        ("API_KEYS", f'{{"web-app": "{DIGEST.upper()}"}}'),
+        ("API_DOCS_ENABLED", "maybe"),
+        ("CORS_ALLOW_ORIGINS", '["https://reviews.example.com/app"]'),
+        ("CORS_ALLOW_ORIGINS", '["reviews.example.com"]'),
         ("DATABASE_POOL_SIZE", "0"),
         ("DATABASE_MAX_OVERFLOW", "-1"),
         ("DATABASE_POOL_TIMEOUT", "0"),
@@ -168,3 +210,29 @@ def test_the_enrichment_deadline_must_outlast_the_sweeps(
 
     with pytest.raises(ValidationError, match="must be longer than sweep_after"):
         Settings()
+
+
+def test_a_client_may_have_several_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_KEYS", f'{{"web-app": ["{DIGEST}", "{OTHER_DIGEST}"]}}')
+
+    assert Settings().api_keys == {"web-app": [DIGEST, OTHER_DIGEST]}
+
+
+@pytest.mark.parametrize(
+    "api_keys",
+    [
+        f'{{"web-app": "{DIGEST}", "batch": "{DIGEST}"}}',
+        f'{{"web-app": ["{DIGEST}", "{DIGEST}"]}}',
+    ],
+)
+def test_an_api_key_appears_only_once(monkeypatch: pytest.MonkeyPatch, api_keys: str) -> None:
+    monkeypatch.setenv("API_KEYS", api_keys)
+
+    with pytest.raises(ValidationError, match="an API key must appear only once"):
+        Settings()
+
+
+def test_any_origin_can_be_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", '["*"]')
+
+    assert Settings().cors_allow_origins == ["*"]
