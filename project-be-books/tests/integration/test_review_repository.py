@@ -166,6 +166,23 @@ async def test_reviews_of_the_same_book_share_its_latest_data(
         assert fetched.book == refreshed
 
 
+async def test_complete_can_retry_a_failed_review(repository: SqlReviewRepository) -> None:
+    review = new_review(status=ReviewStatus.FAILED)
+    await repository.add(review)
+
+    assert not await repository.complete(review.id, PRIDE_AND_PREJUDICE, CREATED_AT)
+    assert await repository.complete(
+        review.id, PRIDE_AND_PREJUDICE, CREATED_AT, expected_status=ReviewStatus.FAILED
+    )
+
+    assert await repository.get(review.id) == replace(
+        review, status=ReviewStatus.COMPLETED, book=PRIDE_AND_PREJUDICE, version=2
+    )
+    assert not await repository.complete(
+        review.id, PRIDE_AND_PREJUDICE, CREATED_AT, expected_status=ReviewStatus.FAILED
+    )
+
+
 async def test_fail(repository: SqlReviewRepository) -> None:
     review = new_review()
     await repository.add(review)
@@ -213,6 +230,33 @@ async def test_expire_pending_reviews(repository: SqlReviewRepository) -> None:
         completed, status=ReviewStatus.COMPLETED, book=PRIDE_AND_PREJUDICE, version=2
     )
     assert await repository.expire_pending(created_before=cutoff, at=CREATED_AT) == 0
+
+
+async def test_failed_reviews(repository: SqlReviewRepository) -> None:
+    oldest = new_review(created_at=CREATED_AT - timedelta(days=3), status=ReviewStatus.FAILED)
+    older = new_review(created_at=CREATED_AT - timedelta(days=2), status=ReviewStatus.FAILED)
+    recent = new_review(created_at=CREATED_AT, status=ReviewStatus.FAILED)
+    pending = new_review(created_at=CREATED_AT - timedelta(days=2))
+    for review in (recent, pending, older, oldest):
+        await repository.add(review)
+    since, until = CREATED_AT - timedelta(days=2), CREATED_AT
+
+    assert await repository.failed_reviews(created_after=None, created_before=None, limit=10) == [
+        oldest.id,
+        older.id,
+        recent.id,
+    ]
+    assert await repository.failed_reviews(created_after=None, created_before=None, limit=2) == [
+        oldest.id,
+        older.id,
+    ]
+    assert await repository.failed_reviews(created_after=since, created_before=None, limit=10) == [
+        older.id,
+        recent.id,
+    ]
+    assert await repository.failed_reviews(created_after=since, created_before=until, limit=10) == [
+        older.id
+    ]
 
 
 async def test_every_change_bumps_the_version(repository: SqlReviewRepository) -> None:

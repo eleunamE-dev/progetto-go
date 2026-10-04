@@ -14,6 +14,7 @@ Python 3.14, FastAPI, MariaDB, RabbitMQ. The original assignment is in [ASSIGNME
 - [How it works](#how-it-works)
 - [Observability](#observability)
 - [Deploying to Kubernetes](#deploying-to-kubernetes)
+- [Operations](#operations)
 - [Design notes](#design-notes)
 - [Configuration](#configuration)
 - [Development](#development)
@@ -31,8 +32,12 @@ the enrichment worker. Then:
 
 - API: http://localhost:8080, with interactive documentation at http://localhost:8080/docs
 - RabbitMQ management: http://localhost:15672 (`user` / `password`)
-- API key for writing reviews: `local-dev-key` (client `local-dev`)
 
+**Writing needs an API key.** `POST`, `PUT` and `DELETE` on `/review` need the header
+`X-API-Key: local-dev-key` (the key of the `local-dev` client); without it the answer is
+`401 Unauthorized`. Searching and reading need no key. See [Authentication](#authentication).
+
+The ports are published on 127.0.0.1 only, so the development passwords stay on your machine.
 `docker compose down` stops everything; add `-v` to delete the database volume too.
 
 The database accounts are created by [deploy/mariadb/users.sql](deploy/mariadb/users.sql) the first
@@ -67,6 +72,11 @@ curl "localhost:8080/book/search?q=pride%20prejudice"
   ]
 }
 ```
+
+The first time, this can take up to a minute: Gutendex needs 15–60 s for a search its CDN hasn't
+cached yet. After 60 s the API gives up with `504 Gateway Timeout`, but Gutendex finishes the work
+and caches the result, so the same search a few minutes later answers at once. See
+[Gutendex is slow](#gutendex-is-slow).
 
 Review it, using the `id` of the book. Writing needs an API key; the answer is `202 Accepted` with
 the address of the review:
@@ -281,6 +291,7 @@ src/bookreviews/
 ├── queue.py            RabbitMQ topology and publisher
 ├── enrichment.py       enrichment, message handling, sweeper
 ├── worker.py           worker process
+├── admin.py            maintenance commands (bookreviews-admin)
 ├── problems.py         RFC 9457 error responses
 ├── middleware.py       request ID, access log, body limit, security headers
 ├── logs.py             JSON logging, with the trace ID when there is one
@@ -338,7 +349,8 @@ rules:
 - RabbitMQ refusing messages.
 
 Unit tests in [alerts.test.yml](deploy/observability/alerts.test.yml) check when each alert fires and
-what it says; CI runs them with `promtool`.
+what it says; CI runs them with `promtool`. Each alert links to its section of the
+[runbook](docs/runbook.md), which says what to check and what to do.
 
 **Dashboard.** [deploy/observability/grafana/bookreviews.json](deploy/observability/grafana/bookreviews.json)
 has four rows:
@@ -391,7 +403,9 @@ Finished Jobs are removed after a day anyway.
 
 **Locally on kind.** `make kind-up` sets up a local cluster: it creates a three-node kind cluster,
 installs Envoy Gateway, builds the image and loads it into the cluster, then applies the local
-overlay. `make kind-down` deletes the cluster.
+overlay. `make kind-verify` then checks the deployment: pod security, network policies, TLS and
+rate limits at the gateway, workers started while RabbitMQ is down, and a rollout of the API
+without a single failed request. `make kind-down` deletes the cluster.
 
 How the manifests work:
 
@@ -435,6 +449,31 @@ How the manifests work:
 - **kind.** The local overlay makes Envoy's Service a ClusterIP, through an `EnvoyProxy` resource:
   kind can't hand out load-balancer addresses, and the Gateway only reports itself ready once it
   has an address.
+
+## Operations
+
+The [runbook](docs/runbook.md) covers releases and rollbacks, a section for each alert, and the
+routine tasks: adding a client or rotating its key, rotating database and RabbitMQ credentials,
+scaling, backups.
+
+- **Rollbacks.** A release that finds the schema at a revision it doesn't know assumes a newer
+  release put it there. `bookreviews-migrate` then has nothing to do and `--wait` returns at once,
+  so the previous release starts again after a rollback. That is safe because a migration must
+  not break the release that is still running.
+- **Failed reviews.** A review still pending after 24 hours is marked `failed`, which a long
+  Gutendex outage can do to many. Once Gutendex is back, `bookreviews-admin retry-failed` enriches
+  them again:
+
+  ```bash
+  docker compose exec worker bookreviews-admin retry-failed --since 2026-10-01 --dry-run
+  docker compose exec worker bookreviews-admin retry-failed --since 2026-10-01
+  ```
+
+  A review whose book is still missing stays failed. One that meets an unavailable Gutendex is left
+  for the next run.
+- **Start-up order.** The worker doesn't need RabbitMQ to start: it waits for it, retrying with a
+  growing delay up to 30 s. The API doesn't need it either; reviews submitted meanwhile are queued
+  by the sweeper.
 
 ## Design notes
 
@@ -480,7 +519,8 @@ The design follows from that:
   the review was submitted (the review is saved and accepted anyway) and reviews whose attempts ran
   out. An outage delays the enrichment; it doesn't lose it.
 - **Deadline.** A review still pending 24 hours after it was submitted is marked `failed`, so a book
-  that Gutendex can never serve doesn't keep the sweeper busy forever.
+  that Gutendex can never serve doesn't keep the sweeper busy forever. `bookreviews-admin
+  retry-failed` gives those reviews another chance, see [Operations](#operations).
 - **Old idempotency keys.** The sweeper also deletes the `Idempotency-Key` records older than 24
   hours; the reviews themselves stay.
 - **Malformed messages.** A message that isn't an enrichment request is moved to the
@@ -559,8 +599,9 @@ The design follows from that:
 
 ### Left out
 
-- Rate limiting: it belongs in front of the service (ingress or API gateway), which sees every
-  instance and the client's address.
+- Rate limits per client. The Kubernetes gateway limits requests per Envoy replica, not per API
+  key: that needs Envoy Gateway's global rate limiting, backed by Redis. The Compose stack has no
+  rate limits.
 - An endpoint to list reviews, for instance per book (the database already indexes `book_id`).
 - A cache shared by several API instances (e.g. Redis).
 - Coordination between the sweepers of several workers (`FOR UPDATE SKIP LOCKED`); today they may
@@ -616,13 +657,14 @@ services and the integration tests. `make` lists the tasks; these are the comman
 | Run the API / the worker | `uv run bookreviews-api` / `uv run bookreviews-worker` |
 | Unit tests | `uv run pytest --cov` |
 | All the tests | `make test-all` |
+| End-to-end checks on a fresh stack | `make e2e` (`uv run python -m e2e.stack`) |
 | Format, lint, types | `make fmt`, `make lint` (ruff, mypy) |
 | Git hooks | `make hooks` |
 | Export the OpenAPI document | `make openapi` |
 | Stack with Prometheus, Grafana and Jaeger | `make observability` |
 | Check the Prometheus configuration and test the alerts | `make alerts` |
 | Validate the Kubernetes manifests | `make manifests` |
-| Local Kubernetes cluster with kind | `make kind-up`, `make kind-down` |
+| Local Kubernetes cluster with kind | `make kind-up`, `make kind-verify`, `make kind-down` |
 
 **Tests.**
 - The unit tests need nothing else.
@@ -630,6 +672,12 @@ services and the integration tests. `make` lists the tasks; these are the comman
   `TEST_RABBITMQ_URL` are set, and are skipped otherwise. `make test-all` sets them for the
   Compose services.
 - `GUTENDEX_LIVE_TEST=1` adds a contract test against the real Gutendex.
+- `make e2e` builds the image and starts the whole stack, Prometheus, Grafana and Jaeger included,
+  as a separate Compose project with its own volumes. It runs about 140 checks against it, then
+  removes it (`--keep` leaves it running). The checks cover the API, what happens when each
+  dependency fails, the operations commands, metrics and traces, and take about six minutes. The
+  stack uses the same ports as `make up`, so stop that first. Gutendex is live: the few checks that
+  depend on it are skipped when it times out.
 
 **Migrations.** With the database running, `uv run alembic revision --autogenerate -m "what changes"`
 writes a new migration from the models; review it before committing.
@@ -640,7 +688,8 @@ commit, and the tests before every push.
 **CI.** GitHub Actions runs on every change to this folder:
 - ruff, mypy and pip-audit;
 - the Prometheus configuration and the alert rule tests, with `promtool`;
-- the whole test suite against MariaDB and RabbitMQ service containers;
+- the whole test suite against the MariaDB and RabbitMQ of [docker-compose.yaml](docker-compose.yaml),
+  so updating their images there tests the new versions;
 - a smoke test of the Docker image and a Trivy scan of it;
 - the Kubernetes overlays, built with Kustomize and validated with kubeconform;
 - on `main`, the publication of the image to GHCR.

@@ -1,5 +1,6 @@
 import json
 import logging
+import sys
 from collections.abc import Iterator
 
 import pytest
@@ -78,3 +79,14 @@ def test_configure_logging_writes_json_to_stdout(capsys: pytest.CaptureFixture[s
         "msg": "kept",
         "attempt": 1,
     }
+
+
+@pytest.mark.usefixtures("restore_root_logger")
+def test_command_line_tools_can_log_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    configure_logging("INFO", sys.stderr)
+
+    logging.getLogger("bookreviews.test").info("to stderr")
+
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert json.loads(output.err)["msg"] == "to stderr"

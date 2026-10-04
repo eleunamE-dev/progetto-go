@@ -17,7 +17,7 @@ services:
       MYSQL_DATABASE: bookreviews
       MARIADB_AUTO_UPGRADE: "1"
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     volumes:
       - db-data:/var/lib/mysql
       - ./deploy/mariadb/users.sql:/docker-entrypoint-initdb.d/users.sql:ro
@@ -34,8 +34,8 @@ services:
       RABBITMQ_DEFAULT_USER: user
       RABBITMQ_DEFAULT_PASS: password
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
@@ -59,8 +59,8 @@ services:
       <<: *environment
       API_KEYS: '{"local-dev": "ed5a18fb8f807f996d649e379d3f35f39c543a91bdbf88c492f2ebd10d4df86c"}'
     ports:
-      - "8080:8080"
-      - "9100:9100"
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9100:9100"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -79,7 +79,7 @@ services:
     <<: *app
     command: ["bookreviews-worker"]
     ports:
-      - "9101:9100"
+      - "127.0.0.1:9101:9100"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9100/healthz')"]
       interval: 10s

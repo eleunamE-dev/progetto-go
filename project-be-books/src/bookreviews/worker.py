@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from typing import Self
 
 import aio_pika
+from aio_pika.abc import AbstractRobustConnection
+from aio_pika.exceptions import CONNECTION_EXCEPTIONS
 
 from bookreviews.catalog import BookCatalog
 from bookreviews.config import Settings
@@ -23,6 +25,9 @@ from bookreviews.queue import CONNECT_TIMEOUT, RabbitQueue, Topology
 from bookreviews.wiring import build_catalog, build_engine
 
 logger = logging.getLogger("bookreviews.worker")
+
+CONNECT_RETRY_DELAY = 1.0
+CONNECT_RETRY_LIMIT = 30.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +54,22 @@ class WorkerOptions:
         )
 
 
+async def connect(rabbitmq_url: str, stop: asyncio.Event) -> AbstractRobustConnection | None:
+    delay = CONNECT_RETRY_DELAY
+    while not stop.is_set():
+        try:
+            return await aio_pika.connect_robust(rabbitmq_url, timeout=CONNECT_TIMEOUT)
+        except (*CONNECTION_EXCEPTIONS, TimeoutError) as exc:
+            logger.warning(
+                "RabbitMQ not reachable, retrying",
+                extra={"error": f"{type(exc).__name__}: {exc}", "retry_in": delay},
+            )
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), delay)
+        delay = min(delay * 2, CONNECT_RETRY_LIMIT)
+    return None
+
+
 async def consume(
     rabbitmq_url: str,
     reviews: EnrichmentRepository,
@@ -70,7 +91,10 @@ async def consume(
             idempotency_key_ttl=options.idempotency_key_ttl,
         ),
     )
-    connection = await aio_pika.connect_robust(rabbitmq_url, timeout=CONNECT_TIMEOUT)
+    connection = await connect(rabbitmq_url, stop)
+    if connection is None:
+        logger.info("worker stopped before RabbitMQ was reachable")
+        return
     try:
         channel = await connection.channel()
         await channel.set_qos(prefetch_count=options.concurrency)

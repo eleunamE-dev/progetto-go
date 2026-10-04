@@ -411,3 +411,57 @@ async def test_sweep_forgets_old_idempotency_keys(
     assert set(repository.reviews) == {old.id, recent.id}
     [record] = [r for r in json_logs() if r["msg"] == "forgot old idempotency keys"]
     assert record["count"] == 1
+
+
+async def test_a_failed_review_can_be_enriched_again(
+    enricher: ReviewEnricher, repository: FakeReviewRepository
+) -> None:
+    review = new_review(status=ReviewStatus.FAILED)
+    await repository.add(review)
+
+    assert await enricher.retry(review.id) is Outcome.COMPLETED
+
+    assert repository.reviews[review.id] == replace(
+        review, status=ReviewStatus.COMPLETED, book=PRIDE_AND_PREJUDICE, version=2
+    )
+
+
+async def test_a_retried_review_whose_book_is_still_missing_stays_failed(
+    enricher: ReviewEnricher, repository: FakeReviewRepository
+) -> None:
+    review = new_review(book_id=999, status=ReviewStatus.FAILED)
+    await repository.add(review)
+
+    assert await enricher.retry(review.id) is Outcome.FAILED
+
+    assert repository.reviews[review.id] == review
+
+
+@pytest.mark.parametrize("status", [ReviewStatus.PENDING, ReviewStatus.COMPLETED])
+async def test_only_failed_reviews_are_retried(
+    enricher: ReviewEnricher,
+    repository: FakeReviewRepository,
+    catalog: FakeCatalog,
+    status: ReviewStatus,
+) -> None:
+    review = new_review(status=status)
+    await repository.add(review)
+
+    assert await enricher.retry(review.id) is Outcome.SKIPPED
+    assert await enricher.retry(uuid.uuid7()) is Outcome.SKIPPED
+
+    assert repository.reviews[review.id] == review
+    assert catalog.book_requests == []
+
+
+async def test_a_retry_meeting_an_unavailable_catalog_changes_nothing(
+    enricher: ReviewEnricher, repository: FakeReviewRepository, catalog: FakeCatalog
+) -> None:
+    review = new_review(status=ReviewStatus.FAILED)
+    await repository.add(review)
+    catalog.error = CatalogUnavailableError("Gutendex GET /books/1342/ returned 503")
+
+    with pytest.raises(CatalogUnavailableError):
+        await enricher.retry(review.id)
+
+    assert repository.reviews[review.id] == review

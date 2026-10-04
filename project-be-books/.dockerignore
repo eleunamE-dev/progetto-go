@@ -7,4 +7,5 @@
 coverage.xml
 htmlcov/
 tests/
+e2e/
 .env
