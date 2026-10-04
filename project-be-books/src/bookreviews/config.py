@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     worker_concurrency: int = Field(default=4, gt=0)
     enrichment_max_attempts: int = Field(default=5, gt=0)
     enrichment_deadline: float = Field(default=86_400, gt=0)
+    idempotency_key_ttl: float = Field(default=86_400, gt=0)
     sweep_interval: float = Field(default=60, gt=0)
     sweep_after: float = Field(default=600, gt=0)
     worker_shutdown_timeout: float = Field(default=15, gt=0)

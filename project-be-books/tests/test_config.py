@@ -32,6 +32,7 @@ VARIABLES = (
     "WORKER_CONCURRENCY",
     "ENRICHMENT_MAX_ATTEMPTS",
     "ENRICHMENT_DEADLINE",
+    "IDEMPOTENCY_KEY_TTL",
     "SWEEP_INTERVAL",
     "SWEEP_AFTER",
     "WORKER_SHUTDOWN_TIMEOUT",
@@ -73,6 +74,7 @@ def test_defaults_need_no_configuration() -> None:
     assert settings.worker_concurrency == 4
     assert settings.enrichment_max_attempts == 5
     assert settings.enrichment_deadline == 86_400
+    assert settings.idempotency_key_ttl == 86_400
     assert settings.sweep_interval == 60
     assert settings.sweep_after == 600
     assert settings.worker_shutdown_timeout == 15
@@ -99,6 +101,7 @@ def test_environment_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("WORKER_CONCURRENCY", "8")
     monkeypatch.setenv("ENRICHMENT_MAX_ATTEMPTS", "3")
     monkeypatch.setenv("ENRICHMENT_DEADLINE", "3600")
+    monkeypatch.setenv("IDEMPOTENCY_KEY_TTL", "7200")
     monkeypatch.setenv("SWEEP_INTERVAL", "30")
     monkeypatch.setenv("SWEEP_AFTER", "120")
     monkeypatch.setenv("WORKER_SHUTDOWN_TIMEOUT", "5")
@@ -125,6 +128,7 @@ def test_environment_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.worker_concurrency == 8
     assert settings.enrichment_max_attempts == 3
     assert settings.enrichment_deadline == 3600
+    assert settings.idempotency_key_ttl == 7200
     assert settings.sweep_interval == 30
     assert settings.sweep_after == 120
     assert settings.worker_shutdown_timeout == 5
@@ -188,6 +192,7 @@ def test_secrets_stay_out_of_logs(monkeypatch: pytest.MonkeyPatch) -> None:
         ("WORKER_CONCURRENCY", "0"),
         ("ENRICHMENT_MAX_ATTEMPTS", "0"),
         ("ENRICHMENT_DEADLINE", "0"),
+        ("IDEMPOTENCY_KEY_TTL", "0"),
         ("SWEEP_INTERVAL", "0"),
         ("SWEEP_AFTER", "0"),
         ("WORKER_SHUTDOWN_TIMEOUT", "0"),

@@ -48,3 +48,32 @@ async def test_readyz(client: httpx.AsyncClient) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+async def test_conditional_requests(client: httpx.AsyncClient) -> None:
+    submitted = await client.post("/review", json={"id": 1342, "review": "A classic.", "score": 9})
+    location, tag = submitted.headers["location"], submitted.headers["etag"]
+    change = {"review": "Even better.", "score": 10}
+
+    assert (await client.get(location, headers={"If-None-Match": tag})).status_code == 304
+    assert (
+        await client.put(location, json=change, headers={"If-Match": '"older"'})
+    ).status_code == 412
+    updated = await client.put(location, json=change, headers={"If-Match": tag})
+    assert updated.status_code == 200
+    assert (await client.delete(location, headers={"If-Match": tag})).status_code == 412
+    deleted = await client.delete(location, headers={"If-Match": updated.headers["etag"]})
+    assert deleted.status_code == 204
+
+
+async def test_a_repeated_post_creates_one_review(client: httpx.AsyncClient) -> None:
+    review = {"id": 1342, "review": "A classic.", "score": 9}
+    headers = {"Idempotency-Key": "integration-1"}
+
+    first = await client.post("/review", json=review, headers=headers)
+    again = await client.post("/review", json=review, headers=headers)
+    other = await client.post("/review", json=review | {"score": 1}, headers=headers)
+
+    assert first.status_code == again.status_code == 202
+    assert again.json()["id"] == first.json()["id"]
+    assert other.status_code == 422

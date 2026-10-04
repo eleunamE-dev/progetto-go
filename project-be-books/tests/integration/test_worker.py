@@ -114,7 +114,9 @@ async def test_queued_reviews_are_enriched(
             request_id_var.reset(token)
         enriched = await wait_for_status(repository, review.id, ReviewStatus.COMPLETED)
 
-    assert enriched == replace(review, status=ReviewStatus.COMPLETED, book=PRIDE_AND_PREJUDICE)
+    assert enriched == replace(
+        review, status=ReviewStatus.COMPLETED, book=PRIDE_AND_PREJUDICE, version=2
+    )
     [record] = [r for r in json_logs() if r["msg"] == "review processed"]
     assert record["request_id"] == "req-42"
     assert record["outcome"] == "completed"

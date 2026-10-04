@@ -17,7 +17,12 @@ from bookreviews.catalog import (
     CatalogUnavailableError,
 )
 from bookreviews.logs import request_id_var
-from bookreviews.review_service import ReviewForbiddenError, ReviewNotFoundError
+from bookreviews.review_service import (
+    IdempotencyKeyReusedError,
+    PreconditionFailedError,
+    ReviewForbiddenError,
+    ReviewNotFoundError,
+)
 
 PROBLEM_JSON = "application/problem+json"
 
@@ -65,6 +70,13 @@ OWNERSHIP_RESPONSES: dict[int | str, dict[str, Any]] = {
     HTTPStatus.FORBIDDEN: {
         "model": ProblemDetails,
         "description": "The review belongs to another client",
+    },
+}
+
+PRECONDITION_RESPONSES: dict[int | str, dict[str, Any]] = {
+    HTTPStatus.PRECONDITION_FAILED: {
+        "model": ProblemDetails,
+        "description": "The review no longer has the entity tag given in If-Match",
     },
 }
 
@@ -175,6 +187,28 @@ async def _review_forbidden(request: Request, exc: ReviewForbiddenError) -> JSON
     )
 
 
+async def _precondition_failed(request: Request, exc: PreconditionFailedError) -> JSONResponse:
+    return problem_response(
+        HTTPStatus.PRECONDITION_FAILED,
+        request.url.path,
+        f"review {exc.review_id} has changed, read it again to get its current ETag",
+    )
+
+
+async def _idempotency_key_reused(request: Request, exc: IdempotencyKeyReusedError) -> JSONResponse:
+    return problem_response(
+        HTTPStatus.UNPROCESSABLE_CONTENT,
+        request.url.path,
+        "the request is not valid",
+        errors=[
+            {
+                "field": "header.Idempotency-Key",
+                "message": f"{exc.key} was already used for a different request",
+            }
+        ],
+    )
+
+
 async def _database_unavailable(request: Request, exc: Exception) -> JSONResponse:
     cause = getattr(exc, "orig", None) or exc
     database_logger.error(
@@ -194,6 +228,8 @@ def register_problem_handlers(app: FastAPI) -> None:
     app.exception_handler(CatalogUnavailableError)(_catalog_unavailable)
     app.exception_handler(ReviewNotFoundError)(_review_not_found)
     app.exception_handler(ReviewForbiddenError)(_review_forbidden)
+    app.exception_handler(PreconditionFailedError)(_precondition_failed)
+    app.exception_handler(IdempotencyKeyReusedError)(_idempotency_key_reused)
     for error in (
         sqlalchemy_errors.OperationalError,
         sqlalchemy_errors.InterfaceError,

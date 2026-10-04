@@ -9,6 +9,7 @@ Python 3.14, FastAPI, MariaDB, RabbitMQ. The original assignment is in [ASSIGNME
 - [Quick start](#quick-start)
 - [A tour of the API](#a-tour-of-the-api)
 - [Endpoints](#endpoints)
+- [Retries and concurrent edits](#retries-and-concurrent-edits)
 - [Authentication](#authentication)
 - [How it works](#how-it-works)
 - [Design notes](#design-notes)
@@ -132,10 +133,10 @@ curl -X DELETE localhost:8080/review/01a1023f-006d-716b-abee-f6d3e9210156 \
 | Endpoint | Success | Errors |
 |---|---|---|
 | `GET /book/search?q={keywords}&page={n}` | 200 | 422 invalid parameters, 404 page past the end, 502/503/504 Gutendex |
-| `POST /review` 🔑 | 202 and `Location` | 401, 413, 422 invalid body or unknown book, 502/503/504 Gutendex, 503 database |
-| `GET /review/{id}` | 202 while `pending`, 200 once `completed` or `failed` | 404, 422 malformed ID, 503 database |
-| `PUT /review/{id}` 🔑 | 200 | 401, 403, 404, 413, 422, 503 database |
-| `DELETE /review/{id}` 🔑 | 204 | 401, 403, 404, 422 malformed ID, 503 database |
+| `POST /review` 🔑 | 202 and `Location` | 401, 413, 422 invalid body, unknown book or reused `Idempotency-Key`, 502/503/504 Gutendex, 503 database |
+| `GET /review/{id}` | 202 while `pending`, 200 once `completed` or `failed`, 304 with `If-None-Match` | 404, 422 malformed ID, 503 database |
+| `PUT /review/{id}` 🔑 | 200 | 401, 403, 404, 412, 413, 422, 503 database |
+| `DELETE /review/{id}` 🔑 | 204 | 401, 403, 404, 412, 422 malformed ID, 503 database |
 | `GET /healthz` | 200: the process is up | |
 | `GET /readyz` | 200: the database is reachable | 503 |
 
@@ -173,6 +174,42 @@ A review is `failed` when its book is no longer in the catalog by the time the w
 
 The OpenAPI document is served at `/openapi.json` and kept in [docs/openapi.json](docs/openapi.json);
 a test fails when the two differ.
+
+## Retries and concurrent edits
+
+**Retrying a POST.** A client that gets no answer (a timeout, a dropped connection) can't know
+whether its review was saved. If it sends an `Idempotency-Key` header, it can safely send the
+request again. The key is a value unique to that review, such as a UUID:
+
+```bash
+curl -i -X POST localhost:8080/review \
+  -H "X-API-Key: local-dev-key" \
+  -H "Idempotency-Key: 6f1c7e0e-3c2a-4d8e-9a43-5b1f0d2c7e91" \
+  -H "Content-Type: application/json" \
+  -d '{"id": 1342, "review": "A classic.", "score": 9}'
+```
+
+- **Same key, same body.** The answer is the review created the first time, with the same
+  `Location`, instead of a duplicate.
+- **Same key, different body.** The answer is 422.
+- **Scope and lifetime.** Keys belong to the client, so two clients may pick the same value. They
+  are remembered for 24 hours, and only while their review exists.
+
+**Lost updates.** Every review response carries an `ETag`. Sent back in `If-Match` with `PUT` or
+`DELETE`, it makes the change conditional: if the review has changed in the meantime, through
+another edit or because the worker added the book, the answer is `412 Precondition Failed`, and the
+client reads the review again before retrying. Without `If-Match` the change is unconditional.
+
+```bash
+curl -i -X PUT localhost:8080/review/01a1023f-006d-716b-abee-f6d3e9210156 \
+  -H "X-API-Key: local-dev-key" \
+  -H 'If-Match: "3f7a9c2e5b8d4f6a1c0e9b7d5a3f1e2c"' \
+  -H "Content-Type: application/json" \
+  -d '{"review": "Even better the second time.", "score": 10}'
+```
+
+**Polling.** A client waiting for the book data can send the `ETag` it has in `If-None-Match`. The
+answer is `304 Not Modified`, without a body, until the review changes.
 
 ## Authentication
 
@@ -297,6 +334,8 @@ The design follows from that:
   out. An outage delays the enrichment; it doesn't lose it.
 - **Deadline.** A review still pending 24 hours after it was submitted is marked `failed`, so a book
   that Gutendex can never serve doesn't keep the sweeper busy forever.
+- **Old idempotency keys.** The sweeper also deletes the `Idempotency-Key` records older than 24
+  hours; the reviews themselves stay.
 - **Malformed messages.** A message that isn't an enrichment request is moved to the
   `review.enrichment.parked` queue, with the reason in its `x-parked-reason` header, to be inspected
   rather than lost.
@@ -326,6 +365,16 @@ The design follows from that:
 
 - **Asynchronous submission.** `POST` answers 202 with `Location`, and `GET` answers 202 with
   `Retry-After` while the review is pending.
+- **Idempotent submission.** The `Idempotency-Key` is stored with the review, in the same
+  transaction, together with a SHA-256 fingerprint of the request. A primary key on (client, key)
+  makes two concurrent requests with the same key end up with one review: the second finds the
+  first and answers with it. A repeated request is answered before Gutendex is called, which also
+  spares Gutendex the retries of clients that timed out.
+- **Entity tags.** The `ETag` is a hash of the review's JSON representation, book data included,
+  so it changes whenever the answer would. A `version` column, bumped by every change, makes the
+  conditional write atomic: the update applies only if the version is still the one that matched
+  `If-Match`. `GET /review/{id}` sends `Cache-Control: no-cache`, so caches may keep a review but
+  must revalidate it.
 - **Errors.** Every error is a problem document, including unknown routes and wrong methods.
   Internal details never reach the client.
 - **Logs.** Logs are JSON, each line with a request ID: the caller's `X-Request-ID` when it is safe
@@ -401,6 +450,7 @@ Every setting has a default that works with the Compose services on `localhost`.
 | `WORKER_CONCURRENCY` | `4` | messages processed at the same time |
 | `ENRICHMENT_MAX_ATTEMPTS` | `5` | attempts before leaving a review to the sweeper |
 | `ENRICHMENT_DEADLINE` | `86400` | seconds after which a pending review is marked `failed`; must exceed `SWEEP_AFTER` |
+| `IDEMPOTENCY_KEY_TTL` | `86400` | seconds an `Idempotency-Key` is remembered (worker) |
 | `SWEEP_INTERVAL` | `60` | seconds between two sweeps |
 | `SWEEP_AFTER` | `600` | seconds after which a pending review is queued again |
 | `WORKER_SHUTDOWN_TIMEOUT` | `15` | seconds left to running messages on shutdown |

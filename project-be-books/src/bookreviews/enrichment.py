@@ -3,6 +3,7 @@ import contextlib
 import logging
 import uuid
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Protocol
@@ -45,6 +46,8 @@ class EnrichmentRepository(Protocol):
     async def mark_queued(self, review_ids: Sequence[uuid.UUID], at: datetime) -> None: ...
 
     async def expire_pending(self, *, created_before: datetime, at: datetime) -> int: ...
+
+    async def forget_idempotency_keys(self, *, created_before: datetime) -> int: ...
 
 
 class Parking(Protocol):
@@ -161,20 +164,26 @@ class MessageHandler:
             await message.ack()
 
 
+@dataclass(frozen=True, slots=True)
+class SweepPolicy:
+    stale_after: float = 600
+    deadline: float = 86_400
+    idempotency_key_ttl: float = 86_400
+
+
 class Sweeper:
     def __init__(
         self,
         reviews: EnrichmentRepository,
         queue: ReviewQueue,
-        *,
-        stale_after: float,
-        deadline: float,
+        policy: SweepPolicy,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._reviews = reviews
         self._queue = queue
-        self._stale_after = timedelta(seconds=stale_after)
-        self._deadline = timedelta(seconds=deadline)
+        self._stale_after = timedelta(seconds=policy.stale_after)
+        self._deadline = timedelta(seconds=policy.deadline)
+        self._key_ttl = timedelta(seconds=policy.idempotency_key_ttl)
         self._clock = clock
 
     async def sweep(self) -> int:
@@ -182,6 +191,9 @@ class Sweeper:
         expired = await self._reviews.expire_pending(created_before=now - self._deadline, at=now)
         if expired:
             logger.warning("gave up on reviews pending for too long", extra={"count": expired})
+        forgotten = await self._reviews.forget_idempotency_keys(created_before=now - self._key_ttl)
+        if forgotten:
+            logger.info("forgot old idempotency keys", extra={"count": forgotten})
         stale = await self._reviews.stale_pending(
             queued_before=now - self._stale_after, limit=SWEEP_BATCH_SIZE
         )
