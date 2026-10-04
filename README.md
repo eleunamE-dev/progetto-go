@@ -37,4 +37,6 @@ docker run --rm -e CGO_ENABLED=1 $(docker build -q .) go test -race .
 
 ## project-be-books
 
-See [project-be-books/README.md](project-be-books/README.md).
+See [project-be-books/README.md](project-be-books/README.md), starting from its
+[Start here](project-be-books/README.md#start-here) section: how to run and try the service in a
+few minutes, where each part of the assignment is, and why the rest was added.
