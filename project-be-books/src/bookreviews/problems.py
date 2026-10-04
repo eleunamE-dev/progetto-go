@@ -17,7 +17,7 @@ from bookreviews.catalog import (
     CatalogUnavailableError,
 )
 from bookreviews.logs import request_id_var
-from bookreviews.review_service import ReviewNotFoundError
+from bookreviews.review_service import ReviewForbiddenError, ReviewNotFoundError
 
 PROBLEM_JSON = "application/problem+json"
 
@@ -45,6 +45,33 @@ VALIDATION_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     HTTPStatus.UNPROCESSABLE_CONTENT: {
         "model": ProblemDetails,
         "description": "The request is not valid; `errors` lists the invalid fields",
+    },
+}
+
+AUTHENTICATION_RESPONSES: dict[int | str, dict[str, Any]] = {
+    HTTPStatus.UNAUTHORIZED: {
+        "model": ProblemDetails,
+        "description": "The X-API-Key header is missing or not valid",
+        "headers": {
+            "WWW-Authenticate": {
+                "description": "Always `ApiKey`",
+                "schema": {"type": "string"},
+            }
+        },
+    },
+}
+
+OWNERSHIP_RESPONSES: dict[int | str, dict[str, Any]] = {
+    HTTPStatus.FORBIDDEN: {
+        "model": ProblemDetails,
+        "description": "The review belongs to another client",
+    },
+}
+
+BODY_TOO_LARGE_RESPONSES: dict[int | str, dict[str, Any]] = {
+    HTTPStatus.CONTENT_TOO_LARGE: {
+        "model": ProblemDetails,
+        "description": "The request body is larger than the limit",
     },
 }
 
@@ -140,6 +167,14 @@ async def _review_not_found(request: Request, exc: ReviewNotFoundError) -> JSONR
     )
 
 
+async def _review_forbidden(request: Request, exc: ReviewForbiddenError) -> JSONResponse:
+    return problem_response(
+        HTTPStatus.FORBIDDEN,
+        request.url.path,
+        f"review {exc.review_id} belongs to another client",
+    )
+
+
 async def _database_unavailable(request: Request, exc: Exception) -> JSONResponse:
     cause = getattr(exc, "orig", None) or exc
     database_logger.error(
@@ -158,6 +193,7 @@ def register_problem_handlers(app: FastAPI) -> None:
     app.exception_handler(RequestValidationError)(_validation_error)
     app.exception_handler(CatalogUnavailableError)(_catalog_unavailable)
     app.exception_handler(ReviewNotFoundError)(_review_not_found)
+    app.exception_handler(ReviewForbiddenError)(_review_forbidden)
     for error in (
         sqlalchemy_errors.OperationalError,
         sqlalchemy_errors.InterfaceError,

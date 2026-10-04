@@ -97,6 +97,13 @@ jobs:
         run: |
           docker run --detach --name api --publish 8080:8080 bookreviews:ci
           curl --fail --silent --show-error --retry 15 --retry-all-errors --retry-delay 1 http://localhost:8080/healthz
+      - name: Vulnerability scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: bookreviews:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
       - name: Container logs
         if: always()
         run: docker logs api || true

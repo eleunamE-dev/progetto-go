@@ -138,6 +138,34 @@
               }
             }
           },
+          "401": {
+            "description": "The X-API-Key header is missing or not valid",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Always `ApiKey`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request body is larger than the limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "422": {
             "description": "The request is not valid; `errors` lists the invalid fields",
             "content": {
@@ -186,7 +214,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ]
       }
     },
     "/review/{review_id}": {
@@ -275,6 +308,11 @@
         ],
         "summary": "Update Review",
         "operationId": "update_review_review__review_id__put",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
         "parameters": [
           {
             "name": "review_id",
@@ -304,6 +342,44 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ReviewResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The X-API-Key header is missing or not valid",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Always `ApiKey`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The review belongs to another client",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request body is larger than the limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
                 }
               }
             }
@@ -354,6 +430,11 @@
         ],
         "summary": "Delete Review",
         "operationId": "delete_review_review__review_id__delete",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
         "parameters": [
           {
             "name": "review_id",
@@ -369,6 +450,34 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "401": {
+            "description": "The X-API-Key header is missing or not valid",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Always `ApiKey`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The review belongs to another client",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "404": {
             "description": "No such review",
@@ -872,6 +981,14 @@
           "results"
         ],
         "title": "SearchResponse"
+      }
+    },
+    "securitySchemes": {
+      "ApiKey": {
+        "type": "apiKey",
+        "description": "Key of the client application, required to create, change and delete reviews.",
+        "in": "header",
+        "name": "X-API-Key"
       }
     }
   }

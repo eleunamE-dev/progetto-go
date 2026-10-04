@@ -25,6 +25,7 @@ def new_review(**changes: Any) -> Review:
         status=ReviewStatus.PENDING,
         created_at=CREATED_AT,
         updated_at=CREATED_AT,
+        owner="tests",
     )
     return replace(review, **changes)
 

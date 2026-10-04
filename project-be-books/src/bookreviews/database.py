@@ -37,6 +37,7 @@ from bookreviews.review_service import Review, ReviewStatus
 
 CONNECT_TIMEOUT = 5
 POOL_RECYCLE = 1800
+MIGRATION_LOCK_TIMEOUT = 600
 TABLE_OPTIONS = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"}
 
 
@@ -119,6 +120,7 @@ class ReviewRow(Base):
     )
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    owner: Mapped[str] = mapped_column(String(64))
     queued_at: Mapped[datetime] = mapped_column(UTCDateTime)
     processed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
@@ -132,6 +134,7 @@ class ReviewRow(Base):
             status=review.status,
             created_at=review.created_at,
             updated_at=review.updated_at,
+            owner=review.owner,
             queued_at=review.created_at,
         )
 
@@ -144,6 +147,7 @@ class ReviewRow(Base):
             status=self.status,
             created_at=self.created_at,
             updated_at=self.updated_at,
+            owner=self.owner,
             book=book.to_domain()
             if book is not None and self.status is ReviewStatus.COMPLETED
             else None,
@@ -279,5 +283,7 @@ def migrations_config(database_url: str) -> Config:
     return config
 
 
-def upgrade_database(database_url: str) -> None:
-    command.upgrade(migrations_config(database_url), "head")
+def upgrade_database(database_url: str, lock_timeout: int = MIGRATION_LOCK_TIMEOUT) -> None:
+    config = migrations_config(database_url)
+    config.attributes["lock_timeout"] = lock_timeout
+    command.upgrade(config, "head")

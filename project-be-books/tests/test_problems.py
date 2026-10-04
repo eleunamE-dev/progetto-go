@@ -9,8 +9,8 @@ from tests.conftest import LogRecords
 
 
 @pytest.fixture
-def app() -> FastAPI:
-    app = create_app(Settings())
+def app(settings: Settings) -> FastAPI:
+    app = create_app(settings)
 
     @app.get("/items/{item_id}")
     async def read_item(item_id: int, q: str) -> dict[str, object]:

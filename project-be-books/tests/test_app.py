@@ -1,7 +1,12 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 import httpx
 from fastapi import FastAPI
 
+from bookreviews.app import create_app
 from bookreviews.catalog import CachedCatalog
+from bookreviews.config import Settings
 from bookreviews.database import SqlReviewRepository, create_engine
 from bookreviews.queue import RabbitQueue
 from tests.conftest import LogRecords
@@ -42,3 +47,57 @@ async def test_readyz_reports_an_unreachable_database(
     assert response.headers["content-type"] == "application/problem+json"
     assert response.json()["detail"] == "the database is not reachable"
     assert [r["msg"] for r in json_logs() if r["level"] == "WARNING"] == ["database not reachable"]
+
+
+@asynccontextmanager
+async def client_for(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+
+async def test_the_docs_can_be_turned_off() -> None:
+    async with client_for(create_app(Settings(api_docs_enabled=False))) as client:
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            assert (await client.get(path)).status_code == 404
+
+
+PREFLIGHT = {
+    "Origin": "https://reviews.example.com",
+    "Access-Control-Request-Method": "POST",
+    "Access-Control-Request-Headers": "content-type, x-api-key",
+}
+
+
+async def test_cross_origin_requests_are_off_by_default(client: httpx.AsyncClient) -> None:
+    response = await client.options("/review", headers=PREFLIGHT)
+
+    assert "access-control-allow-origin" not in response.headers
+
+
+async def test_cross_origin_requests_from_the_allowed_origins() -> None:
+    app = create_app(Settings(cors_allow_origins=["https://reviews.example.com"]))
+    async with client_for(app) as client:
+        preflight = await client.options("/review", headers=PREFLIGHT)
+        stranger = await client.options(
+            "/review", headers=PREFLIGHT | {"Origin": "https://elsewhere.example.com"}
+        )
+        simple = await client.get("/healthz", headers={"Origin": "https://reviews.example.com"})
+
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == "https://reviews.example.com"
+    assert "x-api-key" in preflight.headers["access-control-allow-headers"].lower()
+    assert stranger.status_code == 400
+    assert "access-control-allow-origin" not in stranger.headers
+    assert simple.headers["access-control-allow-origin"] == "https://reviews.example.com"
+    assert "x-request-id" in simple.headers["access-control-expose-headers"].lower()
+
+
+async def test_warns_when_no_api_keys_are_configured(json_logs: LogRecords) -> None:
+    app = create_app(Settings())
+
+    async with app.router.lifespan_context(app):
+        pass
+
+    [record] = [r for r in json_logs() if r["level"] == "WARNING"]
+    assert record["msg"] == "no API keys configured, every write will be refused"

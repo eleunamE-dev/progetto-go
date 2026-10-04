@@ -35,8 +35,8 @@ def catalog() -> FakeCatalog:
 
 
 @pytest.fixture
-def app(catalog: FakeCatalog) -> FastAPI:
-    app = create_app(Settings())
+def app(settings: Settings, catalog: FakeCatalog) -> FastAPI:
+    app = create_app(settings)
     app.dependency_overrides[get_catalog] = lambda: catalog
     return app
 
@@ -201,6 +201,12 @@ async def test_a_suspended_or_saturated_catalog_asks_to_retry_later(
     assert record["level"] == "INFO"
     assert record["error"] == str(error)
     assert not [r for r in json_logs() if r["msg"] == "book catalog request failed"]
+
+
+async def test_search_needs_no_api_key(anonymous: httpx.AsyncClient, catalog: FakeCatalog) -> None:
+    response = await anonymous.get("/book/search", params={"q": "dickens"})
+
+    assert response.status_code == 200
 
 
 async def test_query_is_documented(client: httpx.AsyncClient) -> None:
