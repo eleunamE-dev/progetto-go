@@ -4,6 +4,7 @@ import ssl
 import subprocess
 import sys
 import time
+from collections import Counter
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -20,12 +21,15 @@ HOST = "bookreviews.localtest.me"
 HTTP_PORT = 18080
 HTTPS_PORT = 18443
 METRICS_PORT = 19100
+PROMETHEUS_PORT = 19090
 API_KEY = "local-dev-key"
 API_PODS = "app.kubernetes.io/component=api"
 WORKER_PODS = "app.kubernetes.io/component=worker"
 IN_API = ("-n", NAMESPACE, "exec", "deploy/bookreviews-api", "-c", "api", "--")
 UNKNOWN_REVIEW = "/review/00000000-0000-7000-8000-000000000000"
 RATE_LIMIT_HEADERS = {"x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset"}
+RUNBOOK = "https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#"
+SCRAPED = {"bookreviews-api": 2, "bookreviews-worker": 2}
 CONNECT = (
     "import socket, sys; "
     "socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=10); print('ok')"
@@ -181,6 +185,39 @@ class Cluster:
         check("...and found it up to date", "database schema up to date" in waited, waited[-300:])
         nodes = {pod["spec"].get("nodeName") for pod in api}
         check("the two API pods run on different nodes", len(nodes) == 2, nodes)
+
+    def monitoring(self) -> None:
+        check = self.checks.check
+        with port_forward("monitoring", "service/prometheus-operated", f"{PROMETHEUS_PORT}:9090"):
+            prometheus = httpx.Client(base_url=f"http://127.0.0.1:{PROMETHEUS_PORT}", timeout=10)
+            wait_until(lambda: responds(prometheus, "/-/ready"), 60)
+
+            def jobs() -> Counter[str]:
+                targets = prometheus.get("/api/v1/targets").json()["data"]["activeTargets"]
+                return Counter(t["labels"]["job"] for t in targets if t["health"] == "up")
+
+            check(
+                "Prometheus scrapes the API and worker pods, under the jobs the alerts use",
+                wait_until(lambda: jobs() == SCRAPED, 120, 5),
+                jobs(),
+            )
+            groups = prometheus.get("/api/v1/rules").json()["data"]["groups"]
+            rules = [rule for group in groups for rule in group["rules"]]
+            check(
+                "Prometheus loaded the 8 alert rules",
+                len(rules) == 8 and all(rule["health"] == "ok" for rule in rules),
+                [(rule["name"], rule["health"]) for rule in rules],
+            )
+            check(
+                "...each linking to its section of the runbook",
+                all(
+                    rule["annotations"].get("runbook_url") == RUNBOOK + rule["name"].lower()
+                    for rule in rules
+                ),
+            )
+            alerts = prometheus.get("/api/v1/alerts").json()["data"]["alerts"]
+            firing = [a["labels"]["alertname"] for a in alerts if a["state"] == "firing"]
+            check("no alert is firing", not firing, firing)
 
     def pod_security(self) -> None:
         check = self.checks.check
@@ -397,6 +434,7 @@ def main() -> int:
     checks.run(
         [
             ("Workloads", cluster.workloads),
+            ("Monitoring", cluster.monitoring),
             ("Pod security", cluster.pod_security),
             ("Network policies", cluster.network_policies),
             ("Gateway", cluster.routes),

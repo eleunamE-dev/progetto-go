@@ -19,6 +19,7 @@ with Docker Compose, `docker compose exec worker …` replaces `kubectl exec dep
 | Worker | Deployment `bookreviews-worker`, 3 pods | enriches reviews from RabbitMQ; `/healthz` and `/metrics` on port 9100 |
 | Migrations | Job `bookreviews-migrate`, init container `wait-for-schema` in every pod | the Job uses the `migrator` account, the pods the `app` account |
 | MariaDB, RabbitMQ | outside the cluster | the connection URLs are in the Secret `bookreviews-secrets` |
+| Monitoring | PodMonitors `bookreviews-api` and `bookreviews-worker`, PrometheusRule `bookreviews` | for the Prometheus Operator; the targets get the jobs `bookreviews-api` and `bookreviews-worker` that the alerts use |
 | Gutendex | https://gutendex.com | slow (15–60 s when its CDN has nothing cached) and quick to answer 503 |
 
 Where to look:
@@ -100,15 +101,17 @@ links to its section below.
 
 ### BookReviewsApiDown
 
-Prometheus has not been able to scrape an API pod for 2 minutes. If every pod is affected, the API
-is down; otherwise it runs with less capacity.
+For 2 minutes no API pod has answered Prometheus, or there has been none: the API is down. A
+single pod failing while others serve doesn't raise it; the Deployment replaces that pod.
 
 ```bash
-kubectl -n bookreviews get pods -l app.kubernetes.io/component=api
+kubectl -n bookreviews get deployment,pods -l app.kubernetes.io/component=api
 kubectl -n bookreviews describe pod <pod>
 kubectl -n bookreviews logs <pod> -c api --previous
 ```
 
+- **No pods, or `Pending`:** the Deployment was scaled to zero, or the nodes have no room for the
+  pods (`describe pod` shows why the scheduler can't place them).
 - **Stuck in `Init`:** the pod is waiting for the schema. Read the logs of the init container
   (`-c wait-for-schema`) and of the migration Job; a Job that failed has to be fixed and run again
   (delete it and apply the overlay).
@@ -117,13 +120,14 @@ kubectl -n bookreviews logs <pod> -c api --previous
   "api_keys"`. Fix the Secret or [roll back](#rolling-back).
 - **`OOMKilled`:** raise the memory limit in `base/api.yaml`. The API uses about 90 MiB.
 - **Pods running and ready:** Prometheus can't reach them. Check that it runs in the `monitoring`
-  namespace (the network policy only lets that namespace in) and that it scrapes port 9100.
+  namespace (the network policy only lets that namespace in) and that it selects the PodMonitors:
+  their targets show up in Prometheus under Status → Targets.
 
 ### BookReviewsWorkerDown
 
-Prometheus has not been able to scrape a worker pod for 2 minutes. While no worker runs, reviews
-are accepted but stay `pending`; nothing is lost, since the messages wait in RabbitMQ and the
-sweeper queues again whatever is left behind.
+For 2 minutes no worker pod has answered Prometheus, or there has been none. While no worker runs,
+reviews are accepted but stay `pending`; nothing is lost, since the messages wait in RabbitMQ and
+the sweeper queues again whatever is left behind.
 
 The checks are those of [BookReviewsApiDown](#bookreviewsapidown), with
 `-l app.kubernetes.io/component=worker` and `-c worker`. One more case: a worker that can't reach
@@ -237,7 +241,8 @@ enrichment is delayed, not lost.
 
 ### Adding a client or rotating its key
 
-Generate a key with the image of the release:
+Generate a key with the image of the release (after `docker login ghcr.io`, since the image is
+private), or with `uv run bookreviews-api-key web-shop` in a checkout:
 
 ```bash
 docker run --rm ghcr.io/eleuname-dev/progetto-go/bookreviews:main bookreviews-api-key web-shop
