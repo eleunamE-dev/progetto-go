@@ -2,23 +2,23 @@ groups:
   - name: bookreviews
     rules:
       - alert: BookReviewsApiDown
-        expr: up{job="bookreviews-api"} == 0
+        expr: absent(up{job="bookreviews-api"} == 1)
         for: 2m
         labels:
           severity: critical
         annotations:
           summary: The book reviews API does not answer
-          description: Prometheus has not been able to scrape {{ $labels.instance }} for 2 minutes.
+          description: No instance of the API has answered Prometheus for 2 minutes, or none is running.
           runbook_url: https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#bookreviewsapidown
 
       - alert: BookReviewsWorkerDown
-        expr: up{job="bookreviews-worker"} == 0
+        expr: absent(up{job="bookreviews-worker"} == 1)
         for: 2m
         labels:
           severity: critical
         annotations:
           summary: The enrichment worker does not answer
-          description: Prometheus has not been able to scrape {{ $labels.instance }} for 2 minutes; new reviews stay pending.
+          description: No worker has answered Prometheus for 2 minutes, or none is running; new reviews stay pending.
           runbook_url: https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#bookreviewsworkerdown
 
       - alert: BookReviewsHighErrorRate

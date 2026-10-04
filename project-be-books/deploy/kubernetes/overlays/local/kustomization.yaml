@@ -11,6 +11,9 @@ resources:
   - mariadb.yaml
   - rabbitmq.yaml
 
+components:
+  - ../../components/monitoring
+
 images:
   - name: ghcr.io/eleuname-dev/progetto-go/bookreviews
     newName: bookreviews

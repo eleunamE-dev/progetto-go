@@ -1,0 +1,35 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: bookreviews-api
+  labels:
+    app.kubernetes.io/name: bookreviews
+    app.kubernetes.io/component: api
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bookreviews
+      app.kubernetes.io/component: api
+  podMetricsEndpoints:
+    - port: metrics
+      relabelings:
+        - targetLabel: job
+          replacement: bookreviews-api
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: bookreviews-worker
+  labels:
+    app.kubernetes.io/name: bookreviews
+    app.kubernetes.io/component: worker
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bookreviews
+      app.kubernetes.io/component: worker
+  podMetricsEndpoints:
+    - port: metrics
+      relabelings:
+        - targetLabel: job
+          replacement: bookreviews-worker

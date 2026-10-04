@@ -8,6 +8,8 @@ tests:
     input_series:
       - series: 'up{job="bookreviews-api", instance="api:9100"}'
         values: "1 1 0 0 0 0"
+      - series: 'up{job="bookreviews-worker", instance="worker:9100"}'
+        values: "1x5"
     alert_rule_test:
       - eval_time: 2m
         alertname: BookReviewsApiDown
@@ -17,12 +19,44 @@ tests:
         exp_alerts:
           - exp_labels:
               severity: critical
-              job: bookreviews-api
-              instance: api:9100
             exp_annotations:
               summary: The book reviews API does not answer
-              description: Prometheus has not been able to scrape api:9100 for 2 minutes.
+              description: No instance of the API has answered Prometheus for 2 minutes, or none is running.
               runbook_url: https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#bookreviewsapidown
+      - eval_time: 5m
+        alertname: BookReviewsWorkerDown
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'up{job="bookreviews-worker", instance="10.244.1.5:9100", pod="bookreviews-worker-a"}'
+        values: "1 1 0 0 0 0"
+      - series: 'up{job="bookreviews-worker", instance="10.244.2.7:9100", pod="bookreviews-worker-b"}'
+        values: "1x5"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: BookReviewsWorkerDown
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'up{job="bookreviews-api", instance="api:9100"}'
+        values: "1x5"
+      - series: 'up{job="bookreviews-worker", instance="10.244.1.5:9100", pod="bookreviews-worker-a"}'
+        values: "1 1 stale"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: BookReviewsWorkerDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: BookReviewsWorkerDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: The enrichment worker does not answer
+              description: No worker has answered Prometheus for 2 minutes, or none is running; new reviews stay pending.
+              runbook_url: https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#bookreviewsworkerdown
 
   - interval: 1m
     input_series:

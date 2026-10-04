@@ -340,7 +340,8 @@ whose loop is stuck fails the check. Compose uses it as the worker's healthcheck
 
 **Alerts.** [deploy/observability/alerts.yml](deploy/observability/alerts.yml) holds 8 Prometheus
 rules:
-- the API or the worker down;
+- the API or the worker down: no instance answers, or none is running, which on Kubernetes leaves
+  no target to scrape at all;
 - more than 5% of the requests answering 5xx;
 - slow review requests;
 - calls to Gutendex suspended for 5 minutes;
@@ -350,7 +351,9 @@ rules:
 
 Unit tests in [alerts.test.yml](deploy/observability/alerts.test.yml) check when each alert fires and
 what it says; CI runs them with `promtool`. Each alert links to its section of the
-[runbook](docs/runbook.md), which says what to check and what to do.
+[runbook](docs/runbook.md), which says what to check and what to do. On Kubernetes the same rules
+ship as a PrometheusRule (see [Deploying to Kubernetes](#deploying-to-kubernetes)), and a test fails
+if the two copies differ.
 
 **Dashboard.** [deploy/observability/grafana/bookreviews.json](deploy/observability/grafana/bookreviews.json)
 has four rows:
@@ -372,22 +375,34 @@ standard `OTEL_*` variables apply, such as `OTEL_SERVICE_NAME` and `OTEL_TRACES_
 
 ## Deploying to Kubernetes
 
-The manifests are in [deploy/kubernetes](deploy/kubernetes): a Kustomize base and two overlays.
+The manifests are in [deploy/kubernetes](deploy/kubernetes): a Kustomize base, a component and two
+overlays.
 
 | Directory | Contents |
 |---|---|
 | `base/` | API and worker Deployments, migration Job, Service, autoscaler, disruption budgets, network policies, routes and rate limits |
+| `components/monitoring/` | for the Prometheus Operator: a PodMonitor each for the API and the worker, and the alert rules as a PrometheusRule |
 | `overlays/local/` | for a kind cluster: MariaDB and RabbitMQ inside the cluster, a Gateway with a self-signed certificate, development secrets |
 | `overlays/production/` | the image from GHCR, the public host on an existing Gateway, traces sent to an OpenTelemetry collector |
 
 **Images.** On every push to `main`, CI publishes `ghcr.io/eleuname-dev/progetto-go/bookreviews`,
 tagged `main` and `sha-<commit>`, with its SBOM and build provenance attached. A release pins its
-tag in the production overlay with `kustomize edit set image`.
+tag in the production overlay with `kustomize edit set image`. The image is private, like the
+repository: pods pull it through the `bookreviews` service account, with the `ghcr-pull` secret.
 
-**Deploying.** The cluster needs the Gateway API CRDs, Envoy Gateway and a Gateway for the public
-host. It also needs two Secrets, which never go into the repository:
+**Deploying.** The cluster needs:
+- the Gateway API CRDs, Envoy Gateway and a Gateway for the public host;
+- the Prometheus Operator, with a Prometheus in the `monitoring` namespace. If that Prometheus
+  selects PodMonitors and rules by label, as kube-prometheus-stack does with `release`, add the
+  label in the production overlay.
+
+The namespace comes first, then the secrets, which never go into the repository. The pull secret
+holds a GitHub token that can read packages:
 
 ```bash
+kubectl apply -f deploy/kubernetes/overlays/production/namespace.yaml
+kubectl -n bookreviews create secret docker-registry ghcr-pull --docker-server=ghcr.io \
+  --docker-username=<github user> --docker-password=<token with read:packages>
 kubectl -n bookreviews create secret generic bookreviews-secrets \
   --from-literal=DATABASE_URL='mysql+aiomysql://app:…@db.internal:3306/bookreviews' \
   --from-literal=RABBITMQ_URL='amqps://…' \
@@ -401,11 +416,20 @@ kubectl apply -k deploy/kubernetes/overlays/production
 A Job can't be changed once created, so each release deletes the previous migration Job first.
 Finished Jobs are removed after a day anyway.
 
-**Locally on kind.** `make kind-up` sets up a local cluster: it creates a three-node kind cluster,
-installs Envoy Gateway, builds the image and loads it into the cluster, then applies the local
-overlay. `make kind-verify` then checks the deployment: pod security, network policies, TLS and
-rate limits at the gateway, workers started while RabbitMQ is down, and a rollout of the API
-without a single failed request. `make kind-down` deletes the cluster.
+**Locally on kind.** `make kind-up` sets up a local cluster:
+1. it creates a three-node kind cluster;
+2. it installs Envoy Gateway, and the Prometheus Operator with a Prometheus in `monitoring`;
+3. it builds the image and loads it into the cluster;
+4. it applies the local overlay.
+
+`make kind-verify` then checks the deployment:
+- Prometheus scrapes every pod and loads the alerts;
+- pod security and network policies;
+- TLS and rate limits at the gateway;
+- workers started while RabbitMQ is down;
+- a rollout of the API without a single failed request.
+
+`make kind-down` deletes the cluster.
 
 How the manifests work:
 
@@ -595,7 +619,8 @@ The design follows from that:
 - **Dependencies.** pip-audit checks the locked Python dependencies in CI. Dependabot proposes
   weekly updates of the Python packages, base images, GitHub Actions and pre-commit hooks, and
   waits 7 days after a release before proposing it, to keep clear of short-lived malicious
-  releases.
+  releases. It updates MariaDB and RabbitMQ in `docker-compose.yaml` only, so a test fails until
+  the kind overlay runs the same versions: an update of either takes both files.
 
 ### Left out
 
