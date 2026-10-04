@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: bookreviews
+    includeTemplates: true
+
+resources:
+  - serviceaccount.yaml
+  - api.yaml
+  - worker.yaml
+  - migrate.yaml
+  - networkpolicies.yaml
+  - routes.yaml
+
+configMapGenerator:
+  - name: bookreviews-config
+    literals:
+      - LOG_LEVEL=INFO
+      - API_DOCS_ENABLED=false
+      - HTTP_SHUTDOWN_TIMEOUT=65
+      - WORKER_SHUTDOWN_TIMEOUT=65
+
+images:
+  - name: bookreviews
+    newName: ghcr.io/eleuname-dev/progetto-go/bookreviews
+    newTag: main

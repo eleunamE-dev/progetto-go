@@ -7,7 +7,8 @@ from alembic import command
 from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from bookreviews.database import migrations_config, upgrade_database
+from bookreviews.database import migrations_config, upgrade_database, wait_for_schema
+from tests.conftest import LogRecords
 
 pytestmark = pytest.mark.integration
 
@@ -80,3 +81,21 @@ def test_one_migration_runs_at_a_time(database_url: str) -> None:
 
     upgrade_database(database_url, lock_timeout=1)
     assert run_sql(database_url, "SELECT IS_FREE_LOCK(:lock)", lock=lock) == [1]
+
+
+def test_waiting_for_the_schema(database_url: str, json_logs: LogRecords) -> None:
+    config = migrations_config(database_url)
+    command.downgrade(config, "0003")
+
+    async def wait_while_migrating() -> None:
+        waiting = asyncio.create_task(wait_for_schema(database_url, interval=0.1))
+        await asyncio.sleep(0.5)
+        assert not waiting.done()
+        await asyncio.to_thread(command.upgrade, config, "head")
+        await asyncio.wait_for(waiting, timeout=10)
+
+    asyncio.run(wait_while_migrating())
+
+    messages = [r["msg"] for r in json_logs() if r["logger"] == "bookreviews.database"]
+    assert "waiting for the database schema" in messages
+    assert messages[-1] == "database schema up to date"

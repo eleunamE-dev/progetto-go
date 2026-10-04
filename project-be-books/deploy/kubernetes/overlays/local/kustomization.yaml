@@ -1,0 +1,48 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: bookreviews
+
+resources:
+  - namespace.yaml
+  - ../../base
+  - ../../../mariadb
+  - gateway.yaml
+  - mariadb.yaml
+  - rabbitmq.yaml
+
+images:
+  - name: ghcr.io/eleuname-dev/progetto-go/bookreviews
+    newName: bookreviews
+    newTag: local
+
+configMapGenerator:
+  - name: bookreviews-config
+    behavior: merge
+    literals:
+      - API_DOCS_ENABLED=true
+
+secretGenerator:
+  - name: bookreviews-secrets
+    literals:
+      - DATABASE_URL=mysql+aiomysql://app:app-password@mariadb:3306/bookreviews
+      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672/
+      - 'API_KEYS={"local-dev": "ed5a18fb8f807f996d649e379d3f35f39c543a91bdbf88c492f2ebd10d4df86c"}'
+  - name: bookreviews-migrator
+    literals:
+      - DATABASE_URL=mysql+aiomysql://migrator:migrator-password@mariadb:3306/bookreviews
+  - name: mariadb
+    literals:
+      - root-password=rootpassword
+  - name: rabbitmq
+    literals:
+      - username=user
+      - password=password
+
+patches:
+  - target:
+      kind: HTTPRoute
+    patch: |-
+      - op: replace
+        path: /spec/hostnames/0
+        value: bookreviews.localtest.me

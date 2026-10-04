@@ -1,0 +1,36 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: bookreviews
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: ClusterIP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: bookreviews
+spec:
+  gatewayClassName: eg
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: bookreviews
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: bookreviews.localtest.me
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: bookreviews.localtest.me
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: bookreviews-tls

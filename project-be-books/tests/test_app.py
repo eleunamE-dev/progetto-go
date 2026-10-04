@@ -1,14 +1,16 @@
+import asyncio
 import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import httpx
+import pytest
 from fastapi import FastAPI
 
 from bookreviews.app import create_app
 from bookreviews.catalog import CachedCatalog
 from bookreviews.config import Settings
-from bookreviews.database import SqlReviewRepository, create_engine
+from bookreviews.database import SqlReviewRepository, create_engine, wait_for_schema
 from bookreviews.queue import RabbitQueue
 from tests.conftest import LogRecords
 
@@ -117,3 +119,11 @@ async def test_metrics_are_served_on_their_own_port(settings: Settings) -> None:
     assert "bookreviews_http_requests_total" in metrics.text
     async with client_for(app) as api:
         assert (await api.get("/metrics")).status_code == 404
+
+
+async def test_waiting_for_an_unreachable_database_keeps_trying(json_logs: LogRecords) -> None:
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(5):
+            await wait_for_schema("mysql+aiomysql://user:password@127.0.0.1:9/bookreviews", 0.1)
+
+    assert "database not reachable yet" in [r["msg"] for r in json_logs()]
