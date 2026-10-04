@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: bookreviews-api
+    static_configs:
+      - targets: ["api:9100"]
+
+  - job_name: bookreviews-worker
+    static_configs:
+      - targets: ["worker:9100"]

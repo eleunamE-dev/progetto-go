@@ -12,6 +12,7 @@ Python 3.14, FastAPI, MariaDB, RabbitMQ. The original assignment is in [ASSIGNME
 - [Retries and concurrent edits](#retries-and-concurrent-edits)
 - [Authentication](#authentication)
 - [How it works](#how-it-works)
+- [Observability](#observability)
 - [Design notes](#design-notes)
 - [Configuration](#configuration)
 - [Development](#development)
@@ -280,14 +281,81 @@ src/bookreviews/
 ├── enrichment.py       enrichment, message handling, sweeper
 ├── worker.py           worker process
 ├── problems.py         RFC 9457 error responses
-├── middleware.py       request ID and access log
-├── logs.py             JSON logging
+├── middleware.py       request ID, access log, body limit, security headers
+├── logs.py             JSON logging, with the trace ID when there is one
+├── metrics.py          Prometheus metrics
+├── ops.py              /metrics and /healthz on their own port
+├── telemetry.py        OpenTelemetry tracing
 ├── config.py           settings from environment variables
 ├── openapi.py          OpenAPI export
 └── main.py             console scripts: bookreviews-api, -worker, -migrate
 ```
 
 The API and the worker run from the same image; each command is a console script of the package.
+
+## Observability
+
+```bash
+make observability
+```
+
+This starts the stack together with Prometheus (http://localhost:9090), Grafana
+(http://localhost:3000, where the "Book reviews" dashboard opens without logging in) and Jaeger
+(http://localhost:16686), and turns tracing on. The Compose override behind it is
+[docker-compose.observability.yaml](docker-compose.observability.yaml).
+
+**Metrics.** The API and the worker serve Prometheus metrics at `/metrics` on port 9100 (published
+as 9100 and 9101 by Compose), never on the public port of the API. Besides the process metrics:
+
+| Metric | Labels | |
+|---|---|---|
+| `bookreviews_http_requests_total` | `method`, `route`, `status` | requests answered; `route` is the template, such as `/review/{review_id}`, so the series stay few |
+| `bookreviews_http_request_duration_seconds` | `method`, `route` | histogram |
+| `bookreviews_catalog_requests_total` | `operation`, `outcome` | calls to Gutendex: `ok`, `not_found`, `timeout`, `unavailable`, `error` |
+| `bookreviews_catalog_request_duration_seconds` | `operation` | histogram, up to 60 s |
+| `bookreviews_catalog_rejections_total` | `reason` | calls refused by the circuit breaker (`circuit_open`) or the concurrency limit (`busy`) |
+| `bookreviews_catalog_circuit_open` | | 1 while calls to Gutendex are suspended |
+| `bookreviews_catalog_cache_lookups_total` | `result` | `hit`, `miss` |
+| `bookreviews_reviews_submitted_total` | `result` | `created`, or `replayed` for a repeated `Idempotency-Key` |
+| `bookreviews_queue_publish_failures_total` | `queue` | messages RabbitMQ didn't accept |
+| `bookreviews_enrichments_total` | `outcome` | `completed`, `failed`, `skipped`, `retried`, `gave_up`, `parked` |
+| `bookreviews_enrichment_duration_seconds` | | histogram |
+| `bookreviews_sweeper_actions_total` | `action` | `requeued`, `expired`, `keys_forgotten` |
+| `bookreviews_pending_reviews`, `bookreviews_oldest_pending_review_age_seconds` | | the backlog, measured by the worker at every sweep |
+
+**Worker health.** The worker answers `GET /healthz` on port 9100 from its event loop, so a worker
+whose loop is stuck fails the check. Compose uses it as the worker's healthcheck.
+
+**Alerts.** [deploy/observability/alerts.yml](deploy/observability/alerts.yml) holds 8 Prometheus
+rules:
+- the API or the worker down;
+- more than 5% of the requests answering 5xx;
+- slow review requests;
+- calls to Gutendex suspended for 5 minutes;
+- reviews pending for more than 30 minutes;
+- parked messages;
+- RabbitMQ refusing messages.
+
+Unit tests in [alerts.test.yml](deploy/observability/alerts.test.yml) check when each alert fires and
+what it says; CI runs them with `promtool`.
+
+**Dashboard.** [deploy/observability/grafana/bookreviews.json](deploy/observability/grafana/bookreviews.json)
+has four rows:
+- **API:** traffic by status, error ratio, latency by route, submissions;
+- **Gutendex:** calls and their durations, circuit state, cache hit ratio, refusals;
+- **Enrichment:** outcomes, backlog, sweeper, publish failures;
+- **Processes:** memory and CPU.
+
+**Tracing.** Setting `OTEL_EXPORTER_OTLP_ENDPOINT` (OTLP over HTTP) turns tracing on; the other
+standard `OTEL_*` variables apply, such as `OTEL_SERVICE_NAME` and `OTEL_TRACES_SAMPLER`.
+- **One trace per review.** A review is followed in a single trace: the HTTP request, the database
+  statements, the publish to RabbitMQ, then the worker's processing. The trace context travels in
+  the message headers next to the request ID.
+- **Where the spans come from.** The HTTP spans come from FastAPI's own telemetry. The httpx,
+  SQLAlchemy and aio-pika spans come from the OpenTelemetry instrumentations. The SQLAlchemy one
+  declares support only up to 2.0, so an integration test checks that it traces queries on 2.1.
+- **Logs and traces.** Every log line written inside a span carries `trace_id` and `span_id`, so
+  logs and traces can be joined.
 
 ## Design notes
 
@@ -415,7 +483,6 @@ The design follows from that:
 - Rate limiting: it belongs in front of the service (ingress or API gateway), which sees every
   instance and the client's address.
 - An endpoint to list reviews, for instance per book (the database already indexes `book_id`).
-- Metrics and tracing (Prometheus, OpenTelemetry).
 - A cache shared by several API instances (e.g. Redis).
 - Coordination between the sweepers of several workers (`FOR UPDATE SKIP LOCKED`); today they may
   queue the same review twice, which is harmless.
@@ -431,6 +498,8 @@ Every setting has a default that works with the Compose services on `localhost`.
 | `HTTP_PORT` | `8080` | API |
 | `HTTP_SHUTDOWN_TIMEOUT` | `15` | seconds left to running requests on shutdown |
 | `HTTP_MAX_BODY_SIZE` | `65536` | bytes; a larger request body gets 413 |
+| `METRICS_PORT` | `9100` | port of `/metrics`, and of the worker's `/healthz` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | OTLP/HTTP endpoint of the trace collector; tracing is off while unset |
 | `API_KEYS` | `{}` | JSON object from client names to key digests, see [Authentication](#authentication); empty means every write is refused |
 | `API_DOCS_ENABLED` | `true` | serve `/docs`, `/redoc` and `/openapi.json` |
 | `CORS_ALLOW_ORIGINS` | `[]` | JSON list of the origins allowed to call the API from a browser, e.g. `["https://shop.example.com"]` |
@@ -471,6 +540,8 @@ services and the integration tests. `make` lists the tasks; these are the comman
 | Format, lint, types | `make fmt`, `make lint` (ruff, mypy) |
 | Git hooks | `make hooks` |
 | Export the OpenAPI document | `make openapi` |
+| Stack with Prometheus, Grafana and Jaeger | `make observability` |
+| Check the Prometheus configuration and test the alerts | `make alerts` |
 
 **Tests.**
 - The unit tests need nothing else.
@@ -487,6 +558,7 @@ commit, and the tests before every push.
 
 **CI.** GitHub Actions runs on every change to this folder:
 - ruff, mypy and pip-audit;
+- the Prometheus configuration and the alert rule tests, with `promtool`;
 - the whole test suite against MariaDB and RabbitMQ service containers;
 - a smoke test of the Docker image and a Trivy scan of it.
 

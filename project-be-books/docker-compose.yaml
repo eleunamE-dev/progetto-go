@@ -59,6 +59,7 @@ services:
       API_KEYS: '{"local-dev": "ed5a18fb8f807f996d649e379d3f35f39c543a91bdbf88c492f2ebd10d4df86c"}'
     ports:
       - "8080:8080"
+      - "9100:9100"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -76,6 +77,14 @@ services:
   worker:
     <<: *app
     command: ["bookreviews-worker"]
+    ports:
+      - "9101:9100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9100/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -13,6 +13,8 @@ VARIABLES = (
     "HTTP_PORT",
     "HTTP_SHUTDOWN_TIMEOUT",
     "HTTP_MAX_BODY_SIZE",
+    "METRICS_PORT",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
     "API_KEYS",
     "API_DOCS_ENABLED",
     "CORS_ALLOW_ORIGINS",
@@ -53,6 +55,9 @@ def test_defaults_need_no_configuration() -> None:
     assert settings.http_port == 8080
     assert settings.http_shutdown_timeout == 15
     assert settings.http_max_body_size == 65_536
+    assert settings.metrics_port == 9100
+    assert settings.otel_exporter_otlp_endpoint is None
+    assert not settings.tracing_enabled
     assert settings.api_keys == {}
     assert settings.api_docs_enabled
     assert settings.cors_allow_origins == []
@@ -169,6 +174,8 @@ def test_secrets_stay_out_of_logs(monkeypatch: pytest.MonkeyPatch) -> None:
         ("HTTP_PORT", "0"),
         ("HTTP_SHUTDOWN_TIMEOUT", "0"),
         ("HTTP_MAX_BODY_SIZE", "0"),
+        ("METRICS_PORT", "65536"),
+        ("OTEL_EXPORTER_OTLP_ENDPOINT", "collector:4318"),
         ("API_KEYS", f'{{"Web App": "{DIGEST}"}}'),
         ("API_KEYS", f'{{"-web": "{DIGEST}"}}'),
         ("API_KEYS", '{"web-app": "not-a-sha256-digest"}'),
@@ -241,3 +248,14 @@ def test_any_origin_can_be_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", '["*"]')
 
     assert Settings().cors_allow_origins == ["*"]
+
+
+def test_tracing_follows_the_otlp_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    monkeypatch.setenv("METRICS_PORT", "9200")
+
+    settings = Settings()
+
+    assert str(settings.otel_exporter_otlp_endpoint) == "http://collector:4318/"
+    assert settings.tracing_enabled
+    assert settings.metrics_port == 9200

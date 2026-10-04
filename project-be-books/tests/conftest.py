@@ -7,6 +7,11 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from prometheus_client import REGISTRY
 
 from bookreviews.app import create_app
 from bookreviews.auth import key_digest
@@ -24,7 +29,8 @@ OTHER_API_KEY = "other-key"
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
-        api_keys={CLIENT: [key_digest(API_KEY)], OTHER_CLIENT: [key_digest(OTHER_API_KEY)]}
+        api_keys={CLIENT: [key_digest(API_KEY)], OTHER_CLIENT: [key_digest(OTHER_API_KEY)]},
+        metrics_port=0,
     )
 
 
@@ -67,3 +73,21 @@ def json_logs() -> Iterator[LogRecords]:
     finally:
         logger.removeHandler(handler)
         logger.setLevel(previous_level)
+
+
+def sample(name: str, **labels: str) -> float:
+    return REGISTRY.get_sample_value(name, labels) or 0.0
+
+
+_SPANS = InMemorySpanExporter()
+
+
+@pytest.fixture
+def spans() -> Iterator[InMemorySpanExporter]:
+    if not isinstance(trace.get_tracer_provider(), TracerProvider):
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(_SPANS))
+        trace.set_tracer_provider(provider)
+    _SPANS.clear()
+    yield _SPANS
+    _SPANS.clear()

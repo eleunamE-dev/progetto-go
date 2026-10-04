@@ -8,6 +8,7 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.exceptions import HTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from bookreviews import metrics
 from bookreviews.logs import client_var, request_id_var
 from bookreviews.problems import problem_response
 
@@ -54,6 +55,10 @@ class RequestContextMiddleware:
             response = problem_response(HTTPStatus.INTERNAL_SERVER_ERROR, scope["path"])
             await response(scope, receive, send_with_request_id)
         finally:
+            duration = time.perf_counter() - start
+            route = getattr(scope.get("route"), "path", "unmatched")
+            metrics.http_requests.labels(scope["method"], route, str(status)).inc()
+            metrics.http_request_duration.labels(scope["method"], route).observe(duration)
             logger.log(
                 logging.ERROR if status >= HTTPStatus.INTERNAL_SERVER_ERROR else logging.INFO,
                 "http request",
@@ -61,7 +66,7 @@ class RequestContextMiddleware:
                     "method": scope["method"],
                     "path": scope["path"],
                     "status": status,
-                    "duration_ms": round((time.perf_counter() - start) * 1000, 3),
+                    "duration_ms": round(duration * 1000, 3),
                 },
             )
             client_var.reset(client_token)

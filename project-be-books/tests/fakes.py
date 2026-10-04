@@ -126,6 +126,10 @@ class FakeReviewRepository:
             del self.keys[slot]
         return len(old)
 
+    async def pending_summary(self) -> tuple[int, datetime | None]:
+        pending = [r.created_at for r in self.reviews.values() if r.status is ReviewStatus.PENDING]
+        return len(pending), min(pending, default=None)
+
     def _finish(self, review_id: uuid.UUID, status: ReviewStatus, book: Book | None) -> bool:
         review = self.reviews.get(review_id)
         if review is None or review.status is not ReviewStatus.PENDING:

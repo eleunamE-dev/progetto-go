@@ -20,6 +20,7 @@ from sqlalchemy import (
     TypeDecorator,
     Uuid,
     delete,
+    func,
     select,
     text,
     update,
@@ -342,6 +343,16 @@ class SqlReviewRepository:
                 ),
             )
             return result.rowcount
+
+    async def pending_summary(self) -> tuple[int, datetime | None]:
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(func.count(), func.min(ReviewRow.created_at)).where(
+                    ReviewRow.status == ReviewStatus.PENDING
+                )
+            )
+            count, oldest = result.one()
+            return count, oldest
 
     async def mark_queued(self, review_ids: Sequence[uuid.UUID], at: datetime) -> None:
         if not review_ids:

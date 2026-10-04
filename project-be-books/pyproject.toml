@@ -9,6 +9,12 @@ dependencies = [
     "alembic>=1.20",
     "fastapi>=0.142",
     "httpx>=0.28",
+    "opentelemetry-exporter-otlp-proto-http>=1.45",
+    "opentelemetry-instrumentation-aio-pika>=0.66b0",
+    "opentelemetry-instrumentation-httpx>=0.66b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.66b0",
+    "opentelemetry-sdk>=1.45",
+    "prometheus-client>=0.26",
     "pydantic-settings>=2.15",
     "sqlalchemy[asyncio]>=2.1",
     "uvicorn[standard]>=0.54",
@@ -53,6 +59,7 @@ ignore = ["TRY003"]
 [tool.mypy]
 strict = true
 plugins = ["pydantic.mypy"]
+untyped_calls_exclude = ["prometheus_client"]
 files = ["src", "tests"]
 
 [tool.pytest.ini_options]
