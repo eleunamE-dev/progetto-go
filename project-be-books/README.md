@@ -13,6 +13,7 @@ Python 3.14, FastAPI, MariaDB, RabbitMQ. The original assignment is in [ASSIGNME
 - [Authentication](#authentication)
 - [How it works](#how-it-works)
 - [Observability](#observability)
+- [Deploying to Kubernetes](#deploying-to-kubernetes)
 - [Design notes](#design-notes)
 - [Configuration](#configuration)
 - [Development](#development)
@@ -357,6 +358,78 @@ standard `OTEL_*` variables apply, such as `OTEL_SERVICE_NAME` and `OTEL_TRACES_
 - **Logs and traces.** Every log line written inside a span carries `trace_id` and `span_id`, so
   logs and traces can be joined.
 
+## Deploying to Kubernetes
+
+The manifests are in [deploy/kubernetes](deploy/kubernetes): a Kustomize base and two overlays.
+
+| Directory | Contents |
+|---|---|
+| `base/` | API and worker Deployments, migration Job, Service, autoscaler, disruption budgets, network policies, routes and rate limits |
+| `overlays/local/` | for a kind cluster: MariaDB and RabbitMQ inside the cluster, a Gateway with a self-signed certificate, development secrets |
+| `overlays/production/` | the image from GHCR, the public host on an existing Gateway, traces sent to an OpenTelemetry collector |
+
+**Images.** On every push to `main`, CI publishes `ghcr.io/eleuname-dev/progetto-go/bookreviews`,
+tagged `main` and `sha-<commit>`, with its SBOM and build provenance attached. A release pins its
+tag in the production overlay with `kustomize edit set image`.
+
+**Deploying.** The cluster needs the Gateway API CRDs, Envoy Gateway and a Gateway for the public
+host. It also needs two Secrets, which never go into the repository:
+
+```bash
+kubectl -n bookreviews create secret generic bookreviews-secrets \
+  --from-literal=DATABASE_URL='mysql+aiomysql://app:…@db.internal:3306/bookreviews' \
+  --from-literal=RABBITMQ_URL='amqps://…' \
+  --from-literal=API_KEYS='{"web-shop": "…"}'
+kubectl -n bookreviews create secret generic bookreviews-migrator \
+  --from-literal=DATABASE_URL='mysql+aiomysql://migrator:…@db.internal:3306/bookreviews'
+kubectl -n bookreviews delete job bookreviews-migrate --ignore-not-found
+kubectl apply -k deploy/kubernetes/overlays/production
+```
+
+A Job can't be changed once created, so each release deletes the previous migration Job first.
+Finished Jobs are removed after a day anyway.
+
+**Locally on kind.** `make kind-up` sets up a local cluster: it creates a three-node kind cluster,
+installs Envoy Gateway, builds the image and loads it into the cluster, then applies the local
+overlay. `make kind-down` deletes the cluster.
+
+How the manifests work:
+
+- **Migrations first.** The `bookreviews-migrate` Job applies the migrations with the `migrator`
+  account. API and worker pods start with an init container running `bookreviews-migrate --wait`.
+  It only reads the schema version, as `app`, and waits until it is current, so new code never
+  runs against an old schema. The previous release keeps running during a rollout, so migrations
+  have to stay compatible with it.
+- **Probes.** Readiness and liveness use `/healthz`, not `/readyz`. If readiness checked the
+  database, an outage would take every pod out of service, search included, while the API can
+  still search and answer 503 with `Retry-After` for reviews. The worker's liveness probe is its
+  own `/healthz` on the metrics port.
+- **Rollouts and shutdown.** Rollouts keep every pod running until its replacement is ready
+  (`maxUnavailable: 0`). On shutdown, a 5 s pause lets the gateway stop sending traffic first.
+  Requests and messages in progress then get 65 s to finish, since Gutendex can take a minute,
+  within an 80 s termination grace period.
+- **Capacity.**
+  - The API scales on CPU from 2 to 10 pods.
+  - The worker runs 2 replicas, 3 in production.
+  - Disruption budgets let only one pod of each go down at a time during node drains.
+  - Resource requests follow the measured usage, about 90 MiB per process.
+- **Security.**
+  - Pods run as user 10001, with a read-only root filesystem, no capabilities, no privilege
+    escalation, the default seccomp profile and no service account token.
+  - The production namespace enforces the `restricted` Pod Security Standard.
+  - Network policies deny all traffic by default. They let in only the gateway (to the API) and
+    Prometheus from the `monitoring` namespace (to the metrics port). They let out only DNS,
+    MariaDB, RabbitMQ, HTTPS (for Gutendex) and OTLP.
+- **Gateway API, not Ingress.** The community ingress-nginx controller was
+  [retired](https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/) in March 2026, so
+  traffic comes in through a Gateway API `HTTPRoute` instead.
+  - TLS is terminated at the Gateway, plain HTTP is redirected to HTTPS, and HSTS is added.
+  - Requests get 75 s; Envoy's default of 15 s would cut slow Gutendex calls.
+- **Rate limits.** An Envoy Gateway `BackendTrafficPolicy` caps each Envoy replica at 100 requests
+  per second, of which at most 20 writes; beyond that the answer is 429. Limits per client, for
+  instance per API key, need Envoy Gateway's global rate limiting, which keeps its counters in
+  Redis.
+
 ## Design notes
 
 ### Gutendex is slow
@@ -542,6 +615,8 @@ services and the integration tests. `make` lists the tasks; these are the comman
 | Export the OpenAPI document | `make openapi` |
 | Stack with Prometheus, Grafana and Jaeger | `make observability` |
 | Check the Prometheus configuration and test the alerts | `make alerts` |
+| Validate the Kubernetes manifests | `make manifests` |
+| Local Kubernetes cluster with kind | `make kind-up`, `make kind-down` |
 
 **Tests.**
 - The unit tests need nothing else.
@@ -560,6 +635,8 @@ commit, and the tests before every push.
 - ruff, mypy and pip-audit;
 - the Prometheus configuration and the alert rule tests, with `promtool`;
 - the whole test suite against MariaDB and RabbitMQ service containers;
-- a smoke test of the Docker image and a Trivy scan of it.
+- a smoke test of the Docker image and a Trivy scan of it;
+- the Kubernetes overlays, built with Kustomize and validated with kubeconform;
+- on `main`, the publication of the image to GHCR.
 
 Dependabot proposes the dependency updates, see [Security](#security).

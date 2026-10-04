@@ -1,0 +1,79 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bookreviews-default-deny
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: bookreviews
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bookreviews-api-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bookreviews
+      app.kubernetes.io/component: api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: envoy-gateway-system
+      ports:
+        - port: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bookreviews-metrics-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: bookreviews
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: metrics
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bookreviews-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: bookreviews
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - ports:
+        - port: 3306
+          protocol: TCP
+        - port: 5672
+          protocol: TCP
+        - port: 443
+          protocol: TCP
+        - port: 4318
+          protocol: TCP

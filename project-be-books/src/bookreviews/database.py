@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -6,6 +8,8 @@ from typing import Any, Self, cast, override
 
 from alembic import command
 from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import (
     JSON,
     CursorResult,
@@ -27,7 +31,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.mysql import DATETIME, VARCHAR
 from sqlalchemy.dialects.mysql import insert as mysql_insert
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -47,6 +51,8 @@ from bookreviews.review_service import (
 CONNECT_TIMEOUT = 5
 POOL_RECYCLE = 1800
 MIGRATION_LOCK_TIMEOUT = 600
+logger = logging.getLogger("bookreviews.database")
+
 TABLE_OPTIONS = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"}
 
 
@@ -374,3 +380,26 @@ def upgrade_database(database_url: str, lock_timeout: int = MIGRATION_LOCK_TIMEO
     config = migrations_config(database_url)
     config.attributes["lock_timeout"] = lock_timeout
     command.upgrade(config, "head")
+
+
+async def wait_for_schema(database_url: str, interval: float = 2) -> None:
+    head = ScriptDirectory.from_config(migrations_config(database_url)).get_current_head()
+    engine = create_async_engine(database_url, connect_args={"connect_timeout": CONNECT_TIMEOUT})
+    try:
+        while (current := await _schema_revision(engine)) != head:
+            logger.info("waiting for the database schema", extra={"current": current, "head": head})
+            await asyncio.sleep(interval)
+    finally:
+        await engine.dispose()
+    logger.info("database schema up to date", extra={"head": head})
+
+
+async def _schema_revision(engine: AsyncEngine) -> str | None:
+    try:
+        async with engine.connect() as connection:
+            return await connection.run_sync(
+                lambda sync: MigrationContext.configure(sync).get_current_revision()
+            )
+    except (SQLAlchemyError, OSError) as exc:
+        logger.info("database not reachable yet", extra={"error": f"{type(exc).__name__}: {exc}"})
+        return None

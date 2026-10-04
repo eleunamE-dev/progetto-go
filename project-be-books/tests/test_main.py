@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 import pytest
@@ -32,14 +33,51 @@ def test_run_api_starts_uvicorn_with_the_settings(monkeypatch: pytest.MonkeyPatc
 
 
 def test_run_migrations_upgrades_the_configured_database(monkeypatch: pytest.MonkeyPatch) -> None:
-    upgraded: list[str] = []
-    monkeypatch.setattr(main, "upgrade_database", upgraded.append)
+    upgraded: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        main, "upgrade_database", lambda url, lock_timeout: upgraded.append((url, lock_timeout))
+    )
     monkeypatch.setattr(main, "configure_logging", lambda _level: None)
     monkeypatch.setenv("DATABASE_URL", "mysql+aiomysql://app:secret@db:3306/reviews")
 
-    main.run_migrations()
+    main.run_migrations([])
+    main.run_migrations(["--timeout", "30"])
 
-    assert upgraded == ["mysql+aiomysql://app:secret@db:3306/reviews"]
+    assert upgraded == [
+        ("mysql+aiomysql://app:secret@db:3306/reviews", 600),
+        ("mysql+aiomysql://app:secret@db:3306/reviews", 30),
+    ]
+
+
+def test_run_migrations_can_wait_for_the_schema_instead(monkeypatch: pytest.MonkeyPatch) -> None:
+    waited: list[str] = []
+
+    async def wait_for_schema(url: str) -> None:
+        waited.append(url)
+
+    monkeypatch.setattr(main, "wait_for_schema", wait_for_schema)
+    monkeypatch.setattr(
+        main, "upgrade_database", lambda *_args, **_kwargs: pytest.fail("the schema was changed")
+    )
+    monkeypatch.setattr(main, "configure_logging", lambda _level: None)
+    monkeypatch.setenv("DATABASE_URL", "mysql+aiomysql://app:secret@db:3306/reviews")
+
+    main.run_migrations(["--wait"])
+
+    assert waited == ["mysql+aiomysql://app:secret@db:3306/reviews"]
+
+
+def test_waiting_for_the_schema_gives_up_after_the_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def never_ready(_url: str) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(main, "wait_for_schema", never_ready)
+    monkeypatch.setattr(main, "configure_logging", lambda _level: None)
+
+    with pytest.raises(SystemExit, match="still not up to date after 0 s"):
+        main.run_migrations(["--wait", "--timeout", "0.05"])
 
 
 def test_run_worker_starts_the_worker_with_the_settings(monkeypatch: pytest.MonkeyPatch) -> None:

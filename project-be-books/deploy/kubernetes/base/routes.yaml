@@ -1,0 +1,71 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: bookreviews
+spec:
+  parentRefs:
+    - name: bookreviews
+      sectionName: https
+  hostnames:
+    - bookreviews.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /review
+        - path:
+            type: PathPrefix
+            value: /book
+      backendRefs:
+        - name: bookreviews-api
+          port: 80
+      timeouts:
+        request: 75s
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=31536000; includeSubDomains
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: bookreviews-redirect
+spec:
+  parentRefs:
+    - name: bookreviews
+      sectionName: http
+  hostnames:
+    - bookreviews.example.com
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: bookreviews
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: bookreviews
+  rateLimit:
+    type: Local
+    local:
+      rules:
+        - limit:
+            requests: 100
+            unit: Second
+        - clientSelectors:
+            - methods:
+                - value: POST
+                - value: PUT
+                - value: DELETE
+          limit:
+            requests: 20
+            unit: Second

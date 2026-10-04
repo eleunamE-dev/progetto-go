@@ -112,3 +112,49 @@ jobs:
       - name: Container logs
         if: always()
         run: docker logs api || true
+
+  manifests:
+    name: Kubernetes manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate the overlays
+        run: |
+          for overlay in deploy/kubernetes/overlays/*/; do
+            echo "::group::$overlay"
+            kubectl kustomize "$overlay" | docker run --rm -i               ghcr.io/yannh/kubeconform:v0.8.0@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e               -strict -summary -kubernetes-version 1.34.0               -schema-location default               -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'               -
+            echo "::endgroup::"
+          done
+
+  publish:
+    name: Publish image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint, test, image, manifests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/eleuname-dev/progetto-go/bookreviews
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=main
+      - uses: docker/build-push-action@v7
+        with:
+          context: project-be-books
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          provenance: mode=max
+          sbom: true

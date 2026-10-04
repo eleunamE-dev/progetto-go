@@ -19,10 +19,10 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes \
     && rm -rf /var/lib/apt/lists/* \
     && python -m pip uninstall --yes pip \
-    && groupadd --system app \
-    && useradd --system --gid app --no-create-home app
-COPY --from=build --chown=app:app /app/.venv /app/.venv
+    && groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid app --no-create-home app
+COPY --from=build --chown=10001:10001 /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
-USER app
+USER 10001:10001
 EXPOSE 8080
 CMD ["bookreviews-api"]
