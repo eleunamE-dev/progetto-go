@@ -4,7 +4,13 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from bookreviews.catalog import Book, BookNotFoundError, SearchResult
-from bookreviews.review_service import QueueUnavailableError, Review, ReviewStatus
+from bookreviews.review_service import (
+    IdempotencyKey,
+    IdempotencyKeyTakenError,
+    QueueUnavailableError,
+    Review,
+    ReviewStatus,
+)
 
 
 @dataclass
@@ -35,27 +41,56 @@ class FakeCatalog:
 class FakeReviewRepository:
     reviews: dict[uuid.UUID, Review] = field(default_factory=dict)
     queued_at: dict[uuid.UUID, datetime] = field(default_factory=dict)
+    keys: dict[tuple[str, str], tuple[uuid.UUID, str, datetime]] = field(default_factory=dict)
 
-    async def add(self, review: Review) -> None:
+    async def add(self, review: Review, idempotency_key: IdempotencyKey | None = None) -> None:
+        if idempotency_key is not None:
+            slot = (idempotency_key.owner, idempotency_key.value)
+            if slot in self.keys:
+                raise IdempotencyKeyTakenError(idempotency_key.value)
+            self.keys[slot] = (review.id, idempotency_key.fingerprint, review.created_at)
         self.reviews[review.id] = review
         self.queued_at[review.id] = review.created_at
 
     async def get(self, review_id: uuid.UUID) -> Review | None:
         return self.reviews.get(review_id)
 
+    async def find_by_idempotency_key(self, owner: str, key: str) -> tuple[Review, str] | None:
+        found = self.keys.get((owner, key))
+        if found is None or found[0] not in self.reviews:
+            return None
+        return self.reviews[found[0]], found[1]
+
     async def update(
-        self, review_id: uuid.UUID, *, content: str, score: int, updated_at: datetime
+        self,
+        review_id: uuid.UUID,
+        *,
+        content: str,
+        score: int,
+        updated_at: datetime,
+        expected_version: int | None = None,
     ) -> Review | None:
         review = self.reviews.get(review_id)
-        if review is None:
+        if review is None or (expected_version is not None and review.version != expected_version):
             return None
-        updated = replace(review, content=content, score=score, updated_at=updated_at)
+        updated = replace(
+            review,
+            content=content,
+            score=score,
+            updated_at=updated_at,
+            version=review.version + 1,
+        )
         self.reviews[review_id] = updated
         return updated
 
-    async def delete(self, review_id: uuid.UUID) -> bool:
+    async def delete(self, review_id: uuid.UUID, expected_version: int | None = None) -> bool:
+        review = self.reviews.get(review_id)
+        if review is None or (expected_version is not None and review.version != expected_version):
+            return False
+        del self.reviews[review_id]
         self.queued_at.pop(review_id, None)
-        return self.reviews.pop(review_id, None) is not None
+        self.keys = {slot: entry for slot, entry in self.keys.items() if entry[0] != review_id}
+        return True
 
     async def complete(self, review_id: uuid.UUID, book: Book, at: datetime) -> bool:
         return self._finish(review_id, ReviewStatus.COMPLETED, book)
@@ -85,11 +120,19 @@ class FakeReviewRepository:
             self._finish(review_id, ReviewStatus.FAILED, None)
         return len(expired)
 
+    async def forget_idempotency_keys(self, *, created_before: datetime) -> int:
+        old = [slot for slot, entry in self.keys.items() if entry[2] < created_before]
+        for slot in old:
+            del self.keys[slot]
+        return len(old)
+
     def _finish(self, review_id: uuid.UUID, status: ReviewStatus, book: Book | None) -> bool:
         review = self.reviews.get(review_id)
         if review is None or review.status is not ReviewStatus.PENDING:
             return False
-        self.reviews[review_id] = replace(review, status=status, book=book)
+        self.reviews[review_id] = replace(
+            review, status=status, book=book, version=review.version + 1
+        )
         return True
 
 

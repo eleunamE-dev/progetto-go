@@ -1,10 +1,12 @@
+import hashlib
+import re
 import unicodedata
 import uuid
 from datetime import datetime
 from http import HTTPStatus
 from typing import Annotated, Any, Self
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
@@ -16,11 +18,13 @@ from bookreviews.problems import (
     BODY_TOO_LARGE_RESPONSES,
     CATALOG_ERROR_RESPONSES,
     OWNERSHIP_RESPONSES,
+    PRECONDITION_RESPONSES,
     SERVICE_UNAVAILABLE_RESPONSES,
     VALIDATION_ERROR_RESPONSES,
     ProblemDetails,
 )
 from bookreviews.review_service import (
+    Condition,
     Review,
     ReviewQueue,
     ReviewRepository,
@@ -33,6 +37,10 @@ MAX_REVIEW_LENGTH = 5000
 MIN_SCORE = 1
 MAX_SCORE = 10
 RETRY_AFTER_SECONDS = 5
+REVALIDATE = "no-cache"
+IDEMPOTENCY_KEY_PATTERN = r'^"?[A-Za-z0-9._:-]{1,255}"?$'
+
+_ENTITY_TAG = re.compile(r'(W/)?("[^"]*")')
 
 _ALLOWED_CONTROL_CHARACTERS = frozenset("\n\r\t")
 
@@ -134,6 +142,55 @@ class ReviewResponse(BaseModel):
         )
 
 
+def entity_tag(review: Review) -> str:
+    representation = ReviewResponse.from_review(review).model_dump_json()
+    return f'"{hashlib.sha256(representation.encode()).hexdigest()[:32]}"'
+
+
+def tag_matches(header: str, tag: str, *, weak: bool) -> bool:
+    if header.strip() == "*":
+        return True
+    return any(
+        listed == tag and (weak or not prefix) for prefix, listed in _ENTITY_TAG.findall(header)
+    )
+
+
+def precondition(if_match: str | None) -> Condition | None:
+    if if_match is None:
+        return None
+    return lambda review: tag_matches(if_match, entity_tag(review), weak=False)
+
+
+IfMatch = Annotated[
+    str | None,
+    Header(
+        description="Entity tag from an earlier response: the review is changed only if it "
+        "still has it, otherwise the answer is 412."
+    ),
+]
+IfNoneMatch = Annotated[
+    str | None,
+    Header(description="Entity tags the client already has: 304 if the review still has one."),
+]
+IdempotencyKeyHeader = Annotated[
+    str | None,
+    Header(
+        alias="Idempotency-Key",
+        pattern=IDEMPOTENCY_KEY_PATTERN,
+        description="Unique value chosen by the client, such as a UUID. Repeating the request "
+        "with the same key returns the review created the first time instead of a new one. "
+        "Keys are remembered for a limited time, 24 hours by default.",
+    ),
+]
+
+ENTITY_TAG_HEADERS: dict[str, Any] = {
+    "ETag": {
+        "description": "Entity tag of the review, for If-Match and If-None-Match",
+        "schema": {"type": "string"},
+    }
+}
+
+
 def get_review_repository(request: Request) -> ReviewRepository:
     repository: ReviewRepository = request.app.state.reviews
     return repository
@@ -165,6 +222,7 @@ REVIEW_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     "",
     status_code=HTTPStatus.ACCEPTED,
     responses={
+        HTTPStatus.ACCEPTED: {"headers": ENTITY_TAG_HEADERS},
         **AUTHENTICATION_RESPONSES,
         **BODY_TOO_LARGE_RESPONSES,
         **VALIDATION_ERROR_RESPONSES,
@@ -172,11 +230,19 @@ REVIEW_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     },
 )
 async def submit_review(
-    client: Client, submission: ReviewSubmission, service: Service, response: Response
+    client: Client,
+    submission: ReviewSubmission,
+    service: Service,
+    response: Response,
+    idempotency_key: IdempotencyKeyHeader = None,
 ) -> ReviewResponse:
     try:
         review = await service.submit(
-            submission.id, submission.review, submission.score, owner=client
+            submission.id,
+            submission.review,
+            submission.score,
+            owner=client,
+            idempotency_key=None if idempotency_key is None else idempotency_key.strip('"'),
         )
     except BookNotFoundError:
         raise RequestValidationError(
@@ -190,47 +256,80 @@ async def submit_review(
             ]
         ) from None
     response.headers["Location"] = f"/review/{review.id}"
+    response.headers["ETag"] = entity_tag(review)
     return ReviewResponse.from_review(review)
 
 
 @router.get(
     "/{review_id}",
+    response_model=ReviewResponse,
     responses={
+        HTTPStatus.OK: {"headers": ENTITY_TAG_HEADERS},
         HTTPStatus.ACCEPTED: {
             "model": ReviewResponse,
             "description": "The review is saved and still being processed",
+            "headers": ENTITY_TAG_HEADERS,
+        },
+        HTTPStatus.NOT_MODIFIED: {
+            "description": "The review still has one of the entity tags in If-None-Match"
         },
         **REVIEW_ERROR_RESPONSES,
     },
 )
-async def get_review(review_id: uuid.UUID, service: Service, response: Response) -> ReviewResponse:
+async def get_review(
+    review_id: uuid.UUID, service: Service, response: Response, if_none_match: IfNoneMatch = None
+) -> ReviewResponse | Response:
     review = await service.get(review_id)
+    tag = entity_tag(review)
+    headers = {"ETag": tag, "Cache-Control": REVALIDATE}
+    if review.status is ReviewStatus.PENDING:
+        headers["Retry-After"] = str(RETRY_AFTER_SECONDS)
+    if if_none_match is not None and tag_matches(if_none_match, tag, weak=True):
+        return Response(status_code=HTTPStatus.NOT_MODIFIED, headers=headers)
+    response.headers.update(headers)
     if review.status is ReviewStatus.PENDING:
         response.status_code = HTTPStatus.ACCEPTED
-        response.headers["Retry-After"] = str(RETRY_AFTER_SECONDS)
     return ReviewResponse.from_review(review)
 
 
 @router.put(
     "/{review_id}",
     responses={
+        HTTPStatus.OK: {"headers": ENTITY_TAG_HEADERS},
         **AUTHENTICATION_RESPONSES,
         **OWNERSHIP_RESPONSES,
+        **PRECONDITION_RESPONSES,
         **BODY_TOO_LARGE_RESPONSES,
         **REVIEW_ERROR_RESPONSES,
     },
 )
 async def update_review(
-    client: Client, review_id: uuid.UUID, changes: ReviewChanges, service: Service
+    client: Client,
+    review_id: uuid.UUID,
+    changes: ReviewChanges,
+    service: Service,
+    *,
+    response: Response,
+    if_match: IfMatch = None,
 ) -> ReviewResponse:
-    review = await service.update(review_id, changes.review, changes.score, client)
+    review = await service.update(
+        review_id, changes.review, changes.score, client, condition=precondition(if_match)
+    )
+    response.headers["ETag"] = entity_tag(review)
     return ReviewResponse.from_review(review)
 
 
 @router.delete(
     "/{review_id}",
     status_code=HTTPStatus.NO_CONTENT,
-    responses={**AUTHENTICATION_RESPONSES, **OWNERSHIP_RESPONSES, **REVIEW_ERROR_RESPONSES},
+    responses={
+        **AUTHENTICATION_RESPONSES,
+        **OWNERSHIP_RESPONSES,
+        **PRECONDITION_RESPONSES,
+        **REVIEW_ERROR_RESPONSES,
+    },
 )
-async def delete_review(client: Client, review_id: uuid.UUID, service: Service) -> None:
-    await service.delete(review_id, client)
+async def delete_review(
+    client: Client, review_id: uuid.UUID, service: Service, if_match: IfMatch = None
+) -> None:
+    await service.delete(review_id, client, condition=precondition(if_match))

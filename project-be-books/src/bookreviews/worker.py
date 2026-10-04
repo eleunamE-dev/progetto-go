@@ -10,7 +10,13 @@ import aio_pika
 from bookreviews.catalog import BookCatalog
 from bookreviews.config import Settings
 from bookreviews.database import SqlReviewRepository, create_sessions
-from bookreviews.enrichment import EnrichmentRepository, MessageHandler, ReviewEnricher, Sweeper
+from bookreviews.enrichment import (
+    EnrichmentRepository,
+    MessageHandler,
+    ReviewEnricher,
+    Sweeper,
+    SweepPolicy,
+)
 from bookreviews.gutendex import GutendexClient
 from bookreviews.queue import CONNECT_TIMEOUT, RabbitQueue, Topology
 from bookreviews.wiring import build_catalog, build_engine
@@ -24,6 +30,7 @@ class WorkerOptions:
     concurrency: int = 4
     max_attempts: int = 5
     deadline: float = 86_400
+    idempotency_key_ttl: float = 86_400
     sweep_interval: float = 60
     sweep_after: float = 600
     shutdown_timeout: float = 15
@@ -34,6 +41,7 @@ class WorkerOptions:
             concurrency=settings.worker_concurrency,
             max_attempts=settings.enrichment_max_attempts,
             deadline=settings.enrichment_deadline,
+            idempotency_key_ttl=settings.idempotency_key_ttl,
             sweep_interval=settings.sweep_interval,
             sweep_after=settings.sweep_after,
             shutdown_timeout=settings.worker_shutdown_timeout,
@@ -52,7 +60,15 @@ async def consume(
     handler = MessageHandler(
         ReviewEnricher(reviews, catalog), topology, options.max_attempts, parking=queue
     )
-    sweeper = Sweeper(reviews, queue, stale_after=options.sweep_after, deadline=options.deadline)
+    sweeper = Sweeper(
+        reviews,
+        queue,
+        SweepPolicy(
+            stale_after=options.sweep_after,
+            deadline=options.deadline,
+            idempotency_key_ttl=options.idempotency_key_ttl,
+        ),
+    )
     connection = await aio_pika.connect_robust(rabbitmq_url, timeout=CONNECT_TIMEOUT)
     try:
         channel = await connection.channel()

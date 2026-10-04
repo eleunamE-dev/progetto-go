@@ -9,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from bookreviews.catalog import Book, Person
 from bookreviews.database import SqlReviewRepository
-from bookreviews.review_service import Review, ReviewStatus
+from bookreviews.review_service import (
+    IdempotencyKey,
+    IdempotencyKeyTakenError,
+    Review,
+    ReviewStatus,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -72,7 +77,7 @@ async def test_update(repository: SqlReviewRepository) -> None:
     )
 
     assert updated == replace(
-        review, content="Better on a second read.", score=10, updated_at=later
+        review, content="Better on a second read.", score=10, updated_at=later, version=2
     )
     assert await repository.get(review.id) == updated
 
@@ -112,7 +117,7 @@ async def test_complete_stores_the_book_data(repository: SqlReviewRepository) ->
     assert await repository.complete(review.id, PRIDE_AND_PREJUDICE, CREATED_AT)
 
     assert await repository.get(review.id) == replace(
-        review, status=ReviewStatus.COMPLETED, book=PRIDE_AND_PREJUDICE
+        review, status=ReviewStatus.COMPLETED, book=PRIDE_AND_PREJUDICE, version=2
     )
 
 
@@ -167,7 +172,7 @@ async def test_fail(repository: SqlReviewRepository) -> None:
 
     assert await repository.fail(review.id, CREATED_AT)
 
-    assert await repository.get(review.id) == replace(review, status=ReviewStatus.FAILED)
+    assert await repository.get(review.id) == replace(review, status=ReviewStatus.FAILED, version=2)
 
 
 async def test_stale_pending_reviews(repository: SqlReviewRepository) -> None:
@@ -200,9 +205,77 @@ async def test_expire_pending_reviews(repository: SqlReviewRepository) -> None:
 
     assert await repository.expire_pending(created_before=cutoff, at=CREATED_AT) == 1
 
-    assert await repository.get(abandoned.id) == replace(abandoned, status=ReviewStatus.FAILED)
+    assert await repository.get(abandoned.id) == replace(
+        abandoned, status=ReviewStatus.FAILED, version=2
+    )
     assert await repository.get(recent.id) == recent
     assert await repository.get(completed.id) == replace(
-        completed, status=ReviewStatus.COMPLETED, book=PRIDE_AND_PREJUDICE
+        completed, status=ReviewStatus.COMPLETED, book=PRIDE_AND_PREJUDICE, version=2
     )
     assert await repository.expire_pending(created_before=cutoff, at=CREATED_AT) == 0
+
+
+async def test_every_change_bumps_the_version(repository: SqlReviewRepository) -> None:
+    review = new_review()
+    await repository.add(review)
+
+    updated = await repository.update(review.id, content="Changed.", score=1, updated_at=CREATED_AT)
+    await repository.complete(review.id, PRIDE_AND_PREJUDICE, CREATED_AT)
+
+    assert review.version == 1
+    assert updated is not None
+    assert updated.version == 2
+    completed = await repository.get(review.id)
+    assert completed is not None
+    assert completed.version == 3
+
+
+async def test_conditional_update_and_delete(repository: SqlReviewRepository) -> None:
+    review = new_review()
+    await repository.add(review)
+
+    stale = await repository.update(
+        review.id, content="Changed.", score=1, updated_at=CREATED_AT, expected_version=2
+    )
+    updated = await repository.update(
+        review.id, content="Changed.", score=1, updated_at=CREATED_AT, expected_version=1
+    )
+
+    assert stale is None
+    assert updated is not None
+    assert updated.version == 2
+    assert not await repository.delete(review.id, expected_version=1)
+    assert await repository.delete(review.id, expected_version=2)
+    assert await repository.get(review.id) is None
+
+
+async def test_idempotency_keys(repository: SqlReviewRepository) -> None:
+    review = new_review()
+    await repository.add(review, IdempotencyKey("tests", "Key-1", "a" * 64))
+    duplicate = new_review()
+
+    with pytest.raises(IdempotencyKeyTakenError):
+        await repository.add(duplicate, IdempotencyKey("tests", "Key-1", "b" * 64))
+
+    assert await repository.get(duplicate.id) is None
+    assert await repository.find_by_idempotency_key("tests", "Key-1") == (review, "a" * 64)
+    assert await repository.find_by_idempotency_key("tests", "key-1") is None
+    assert await repository.find_by_idempotency_key("other-app", "Key-1") is None
+    await repository.delete(review.id)
+    assert await repository.find_by_idempotency_key("tests", "Key-1") is None
+
+
+async def test_forget_idempotency_keys(repository: SqlReviewRepository) -> None:
+    old = new_review(created_at=CREATED_AT - timedelta(days=2))
+    recent = new_review()
+    await repository.add(old, IdempotencyKey("tests", "old", "a" * 64))
+    await repository.add(recent, IdempotencyKey("tests", "recent", "b" * 64))
+
+    forgotten = await repository.forget_idempotency_keys(
+        created_before=CREATED_AT - timedelta(days=1)
+    )
+
+    assert forgotten == 1
+    assert await repository.find_by_idempotency_key("tests", "old") is None
+    assert await repository.find_by_idempotency_key("tests", "recent") == (recent, "b" * 64)
+    assert await repository.get(old.id) == old

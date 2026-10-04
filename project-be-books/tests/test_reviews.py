@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -442,6 +443,14 @@ async def test_reviews_are_documented(client: httpx.AsyncClient) -> None:
     assert set(paths["/review"]) == {"post"}
     assert set(paths["/review/{review_id}"]) == {"get", "put", "delete"}
     post, review = paths["/review"]["post"], paths["/review/{review_id}"]
+    assert [p["name"] for p in post["parameters"]] == ["Idempotency-Key"]
+    assert {p["name"] for p in review["get"]["parameters"]} == {"review_id", "if-none-match"}
+    assert {p["name"] for p in review["put"]["parameters"]} == {"review_id", "if-match"}
+    assert {p["name"] for p in review["delete"]["parameters"]} == {"review_id", "if-match"}
+    assert {"304"} <= review["get"]["responses"].keys()
+    assert "ETag" in review["get"]["responses"]["200"]["headers"]
+    assert "412" in review["put"]["responses"]
+    assert "412" in review["delete"]["responses"]
     assert post["security"] == [{"ApiKey": []}]
     assert review["put"]["security"] == review["delete"]["security"] == [{"ApiKey": []}]
     assert "security" not in review["get"]
@@ -466,3 +475,157 @@ def test_get_review_queue_reads_the_application_state() -> None:
     app.state.queue = queue
 
     assert get_review_queue(Request({"type": "http", "app": app})) is queue
+
+
+async def test_reviews_carry_an_entity_tag(client: httpx.AsyncClient) -> None:
+    posted = await client.post("/review", json=VALID)
+    location = posted.headers["location"]
+
+    fetched = await client.get(location)
+    again = await client.get(location)
+    updated = await client.put(location, json={"review": "Changed.", "score": 1})
+
+    assert re.fullmatch(r'"[0-9a-f]{32}"', posted.headers["etag"])
+    assert posted.headers["etag"] == fetched.headers["etag"] == again.headers["etag"]
+    assert fetched.headers["cache-control"] == "no-cache"
+    assert updated.headers["etag"] != fetched.headers["etag"]
+    assert (await client.get(location)).headers["etag"] == updated.headers["etag"]
+
+
+@pytest.mark.parametrize("header", ["{tag}", "W/{tag}", '"older", {tag}', "*"])
+async def test_get_answers_304_when_the_client_has_the_current_version(
+    client: httpx.AsyncClient, repository: FakeReviewRepository, header: str
+) -> None:
+    review = stored_review()
+    await repository.add(review)
+    tag = (await client.get(f"/review/{review.id}")).headers["etag"]
+
+    response = await client.get(
+        f"/review/{review.id}", headers={"If-None-Match": header.format(tag=tag)}
+    )
+
+    assert response.status_code == 304
+    assert response.content == b""
+    assert response.headers["etag"] == tag
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["retry-after"] == "5"
+
+
+async def test_get_answers_in_full_when_the_review_changed(
+    client: httpx.AsyncClient, repository: FakeReviewRepository
+) -> None:
+    review = stored_review(ReviewStatus.COMPLETED, PRIDE_AND_PREJUDICE)
+    await repository.add(review)
+
+    response = await client.get(f"/review/{review.id}", headers={"If-None-Match": '"older"'})
+
+    assert response.status_code == 200
+    assert response.json()["book"]["title"] == "Pride and Prejudice"
+    assert "retry-after" not in response.headers
+
+
+async def test_if_match_protects_updates_and_deletes(
+    client: httpx.AsyncClient, repository: FakeReviewRepository
+) -> None:
+    review = stored_review()
+    await repository.add(review)
+    location = f"/review/{review.id}"
+    tag = (await client.get(location)).headers["etag"]
+    change = {"review": "Changed.", "score": 1}
+
+    stale = await client.put(location, json=change, headers={"If-Match": '"older"'})
+    weak = await client.put(location, json=change, headers={"If-Match": f"W/{tag}"})
+    updated = await client.put(location, json=change, headers={"If-Match": f'"older", {tag}'})
+    late_delete = await client.delete(location, headers={"If-Match": tag})
+    deleted = await client.delete(location, headers={"If-Match": updated.headers["etag"]})
+
+    for refused in (stale, weak, late_delete):
+        assert refused.status_code == 412
+        assert refused.headers["content-type"] == "application/problem+json"
+        assert refused.json()["detail"] == (
+            f"review {review.id} has changed, read it again to get its current ETag"
+        )
+    assert updated.status_code == 200
+    assert deleted.status_code == 204
+    assert repository.reviews == {}
+
+
+async def test_if_match_any_version(
+    client: httpx.AsyncClient, repository: FakeReviewRepository
+) -> None:
+    review = stored_review()
+    await repository.add(review)
+
+    response = await client.put(
+        f"/review/{review.id}", json={"review": "Changed.", "score": 1}, headers={"If-Match": "*"}
+    )
+
+    assert response.status_code == 200
+
+
+async def test_a_repeated_post_returns_the_same_review(
+    client: httpx.AsyncClient, repository: FakeReviewRepository, queue: FakeQueue
+) -> None:
+    headers = {"Idempotency-Key": "4f9a0f2e-0b8e-4d1c-9a51-7c1b2d3e4f50"}
+
+    first = await client.post("/review", json=VALID, headers=headers)
+    again = await client.post("/review", json=VALID, headers=headers)
+
+    assert first.status_code == again.status_code == 202
+    assert again.json() == first.json()
+    assert again.headers["location"] == first.headers["location"]
+    assert again.headers["etag"] == first.headers["etag"]
+    assert len(repository.reviews) == 1
+    assert len(queue.enqueued) == 1
+
+
+async def test_the_idempotency_key_may_be_quoted(
+    client: httpx.AsyncClient, repository: FakeReviewRepository
+) -> None:
+    first = await client.post("/review", json=VALID, headers={"Idempotency-Key": "abc-1"})
+    again = await client.post("/review", json=VALID, headers={"Idempotency-Key": '"abc-1"'})
+
+    assert again.json()["id"] == first.json()["id"]
+    assert len(repository.reviews) == 1
+
+
+async def test_an_idempotency_key_reused_for_another_request(
+    client: httpx.AsyncClient, repository: FakeReviewRepository
+) -> None:
+    await client.post("/review", json=VALID, headers={"Idempotency-Key": "abc-1"})
+
+    response = await client.post(
+        "/review", json=VALID | {"score": 3}, headers={"Idempotency-Key": "abc-1"}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        {
+            "field": "header.Idempotency-Key",
+            "message": "abc-1 was already used for a different request",
+        }
+    ]
+    assert len(repository.reviews) == 1
+
+
+async def test_idempotency_keys_are_per_client(
+    client: httpx.AsyncClient, repository: FakeReviewRepository
+) -> None:
+    mine = await client.post("/review", json=VALID, headers={"Idempotency-Key": "abc-1"})
+    theirs = await client.post(
+        "/review", json=VALID, headers={"Idempotency-Key": "abc-1", "X-API-Key": OTHER_API_KEY}
+    )
+
+    assert mine.json()["id"] != theirs.json()["id"]
+    assert len(repository.reviews) == 2
+
+
+@pytest.mark.parametrize("key", ["", "with space", "x" * 256, "a/b"])
+async def test_invalid_idempotency_keys_are_rejected(
+    client: httpx.AsyncClient, repository: FakeReviewRepository, key: str
+) -> None:
+    response = await client.post("/review", json=VALID, headers={"Idempotency-Key": key})
+
+    assert response.status_code == 422
+    assert [e["field"] for e in response.json()["errors"]] == ["header.Idempotency-Key"]
+    assert repository.reviews == {}

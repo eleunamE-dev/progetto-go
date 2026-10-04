@@ -117,15 +117,41 @@
         ],
         "summary": "Submit Review",
         "operationId": "submit_review_review_post",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^\"?[A-Za-z0-9._:-]{1,255}\"?$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Unique value chosen by the client, such as a UUID. Repeating the request with the same key returns the review created the first time instead of a new one. Keys are remembered for a limited time, 24 hours by default.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Unique value chosen by the client, such as a UUID. Repeating the request with the same key returns the review created the first time instead of a new one. Keys are remembered for a limited time, 24 hours by default."
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ReviewSubmission"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "202": {
@@ -134,6 +160,14 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ReviewResponse"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Entity tag of the review, for If-Match and If-None-Match",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -214,12 +248,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "ApiKey": []
-          }
-        ]
+        }
       }
     },
     "/review/{review_id}": {
@@ -239,6 +268,24 @@
               "format": "uuid",
               "title": "Review Id"
             }
+          },
+          {
+            "name": "if-none-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Entity tags the client already has: 304 if the review still has one.",
+              "title": "If-None-Match"
+            },
+            "description": "Entity tags the client already has: 304 if the review still has one."
           }
         ],
         "responses": {
@@ -250,10 +297,26 @@
                   "$ref": "#/components/schemas/ReviewResponse"
                 }
               }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Entity tag of the review, for If-Match and If-None-Match",
+                "schema": {
+                  "type": "string"
+                }
+              }
             }
           },
           "202": {
             "description": "The review is saved and still being processed",
+            "headers": {
+              "ETag": {
+                "description": "Entity tag of the review, for If-Match and If-None-Match",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -261,6 +324,9 @@
                 }
               }
             }
+          },
+          "304": {
+            "description": "The review still has one of the entity tags in If-None-Match"
           },
           "404": {
             "description": "No such review",
@@ -323,6 +389,24 @@
               "format": "uuid",
               "title": "Review Id"
             }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Entity tag from an earlier response: the review is changed only if it still has it, otherwise the answer is 412.",
+              "title": "If-Match"
+            },
+            "description": "Entity tag from an earlier response: the review is changed only if it still has it, otherwise the answer is 412."
           }
         ],
         "requestBody": {
@@ -342,6 +426,14 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ReviewResponse"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Entity tag of the review, for If-Match and If-None-Match",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -366,6 +458,16 @@
           },
           "403": {
             "description": "The review belongs to another client",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "The review no longer has the entity tag given in If-Match",
             "content": {
               "application/json": {
                 "schema": {
@@ -445,6 +547,24 @@
               "format": "uuid",
               "title": "Review Id"
             }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Entity tag from an earlier response: the review is changed only if it still has it, otherwise the answer is 412.",
+              "title": "If-Match"
+            },
+            "description": "Entity tag from an earlier response: the review is changed only if it still has it, otherwise the answer is 412."
           }
         ],
         "responses": {
@@ -471,6 +591,16 @@
           },
           "403": {
             "description": "The review belongs to another client",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "The review no longer has the entity tag given in If-Match",
             "content": {
               "application/json": {
                 "schema": {

@@ -9,9 +9,15 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 from bookreviews.catalog import Book, CatalogTimeoutError, CatalogUnavailableError, Person
-from bookreviews.enrichment import MessageHandler, Outcome, ReviewEnricher, Sweeper
+from bookreviews.enrichment import (
+    MessageHandler,
+    Outcome,
+    ReviewEnricher,
+    Sweeper,
+    SweepPolicy,
+)
 from bookreviews.queue import Topology
-from bookreviews.review_service import Review, ReviewStatus
+from bookreviews.review_service import IdempotencyKey, Review, ReviewStatus
 from tests.conftest import LogRecords
 from tests.fakes import FakeCatalog, FakeMessage, FakeQueue, FakeReviewRepository
 
@@ -24,6 +30,7 @@ PRIDE_AND_PREJUDICE = Book(
 )
 TOPOLOGY = Topology()
 DEADLINE = 86_400
+POLICY = SweepPolicy(stale_after=600, deadline=DEADLINE, idempotency_key_ttl=86_400)
 
 
 def new_review(**changes: Any) -> Review:
@@ -79,7 +86,7 @@ async def test_enrich_completes_a_pending_review(
 
     assert await enricher.enrich(review.id) is Outcome.COMPLETED
     assert repository.reviews[review.id] == replace(
-        review, status=ReviewStatus.COMPLETED, book=PRIDE_AND_PREJUDICE
+        review, status=ReviewStatus.COMPLETED, book=PRIDE_AND_PREJUDICE, version=2
     )
 
 
@@ -282,7 +289,7 @@ async def test_sweep_queues_stale_pending_reviews_again(
     for review in (second, first, recent, done):
         await repository.add(review)
     queue = FakeQueue()
-    sweeper = Sweeper(repository, queue, stale_after=600, deadline=DEADLINE, clock=lambda: NOW)
+    sweeper = Sweeper(repository, queue, POLICY, clock=lambda: NOW)
 
     assert await sweeper.sweep() == 2
 
@@ -299,9 +306,7 @@ async def test_sweep_stops_when_the_queue_is_unavailable(
     first, second = new_review(created_at=old), new_review(created_at=old + timedelta(minutes=1))
     await repository.add(first)
     await repository.add(second)
-    sweeper = Sweeper(
-        repository, FakeQueue(accepted=1), stale_after=600, deadline=DEADLINE, clock=lambda: NOW
-    )
+    sweeper = Sweeper(repository, FakeQueue(accepted=1), POLICY, clock=lambda: NOW)
 
     assert await sweeper.sweep() == 1
 
@@ -320,7 +325,7 @@ async def test_sweeper_runs_until_stopped(repository: FakeReviewRepository) -> N
 
     queue = SignallingQueue()
     stop = asyncio.Event()
-    sweeper = Sweeper(repository, queue, stale_after=600, deadline=DEADLINE, clock=lambda: NOW)
+    sweeper = Sweeper(repository, queue, POLICY, clock=lambda: NOW)
 
     running = asyncio.create_task(sweeper.run(interval=0.01, stop=stop))
     await asyncio.wait_for(queued.wait(), timeout=1)
@@ -343,9 +348,7 @@ async def test_sweeper_survives_database_errors(json_logs: LogRecords) -> None:
             stop.set()
             return []
 
-    sweeper = Sweeper(
-        FlakyRepository(), FakeQueue(), stale_after=600, deadline=DEADLINE, clock=lambda: NOW
-    )
+    sweeper = Sweeper(FlakyRepository(), FakeQueue(), POLICY, clock=lambda: NOW)
 
     await asyncio.wait_for(sweeper.run(interval=0.01, stop=stop), timeout=1)
 
@@ -366,9 +369,7 @@ async def test_sweeper_survives_unexpected_errors(json_logs: LogRecords) -> None
             stop.set()
             return []
 
-    sweeper = Sweeper(
-        BrokenRepository(), FakeQueue(), stale_after=600, deadline=DEADLINE, clock=lambda: NOW
-    )
+    sweeper = Sweeper(BrokenRepository(), FakeQueue(), POLICY, clock=lambda: NOW)
 
     await asyncio.wait_for(sweeper.run(interval=0.01, stop=stop), timeout=1)
 
@@ -385,7 +386,7 @@ async def test_sweep_gives_up_on_reviews_pending_for_too_long(
     await repository.add(abandoned)
     await repository.add(recent)
     queue = FakeQueue()
-    sweeper = Sweeper(repository, queue, stale_after=600, deadline=DEADLINE, clock=lambda: NOW)
+    sweeper = Sweeper(repository, queue, POLICY, clock=lambda: NOW)
 
     await sweeper.sweep()
 
@@ -393,4 +394,20 @@ async def test_sweep_gives_up_on_reviews_pending_for_too_long(
     assert repository.reviews[recent.id].status is ReviewStatus.PENDING
     assert queue.enqueued == [recent.id]
     [record] = [r for r in json_logs() if r["msg"] == "gave up on reviews pending for too long"]
+    assert record["count"] == 1
+
+
+async def test_sweep_forgets_old_idempotency_keys(
+    repository: FakeReviewRepository, json_logs: LogRecords
+) -> None:
+    old = new_review(created_at=NOW - timedelta(days=2), status=ReviewStatus.COMPLETED)
+    recent = new_review(created_at=NOW - timedelta(hours=1), status=ReviewStatus.COMPLETED)
+    await repository.add(old, IdempotencyKey("tests", "old-key", "a" * 64))
+    await repository.add(recent, IdempotencyKey("tests", "new-key", "b" * 64))
+
+    await Sweeper(repository, FakeQueue(), POLICY, clock=lambda: NOW).sweep()
+
+    assert set(repository.keys) == {("tests", "new-key")}
+    assert set(repository.reviews) == {old.id, recent.id}
+    [record] = [r for r in json_logs() if r["msg"] == "forgot old idempotency keys"]
     assert record["count"] == 1
