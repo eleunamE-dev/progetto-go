@@ -18,6 +18,7 @@ from bookreviews.enrichment import (
     SweepPolicy,
 )
 from bookreviews.gutendex import GutendexClient
+from bookreviews.ops import OpsServer
 from bookreviews.queue import CONNECT_TIMEOUT, RabbitQueue, Topology
 from bookreviews.wiring import build_catalog, build_engine
 
@@ -91,6 +92,8 @@ async def consume(
 
 
 async def serve(settings: Settings, stop: asyncio.Event) -> None:
+    ops = OpsServer(settings.http_host, settings.metrics_port)
+    await ops.start()
     engine = build_engine(settings)
     try:
         async with GutendexClient(
@@ -105,6 +108,7 @@ async def serve(settings: Settings, stop: asyncio.Event) -> None:
             )
     finally:
         await engine.dispose()
+        await ops.close()
 
 
 async def main(settings: Settings) -> None:

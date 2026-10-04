@@ -9,6 +9,7 @@ import aio_pika
 from aio_pika.abc import AbstractChannel, AbstractQueue, AbstractRobustConnection
 from aio_pika.exceptions import CONNECTION_EXCEPTIONS, AMQPException
 
+from bookreviews import metrics
 from bookreviews.logs import request_id_var
 from bookreviews.review_service import QueueUnavailableError
 
@@ -134,6 +135,7 @@ class RabbitQueue:
                 message, routing_key=routing_key, timeout=PUBLISH_TIMEOUT
             )
         except (*CONNECTION_EXCEPTIONS, AMQPException, TimeoutError) as exc:
+            metrics.queue_publish_failures.labels(routing_key).inc()
             raise QueueUnavailableError(f"could not publish to RabbitMQ: {exc!r}") from exc
 
     async def close(self) -> None:

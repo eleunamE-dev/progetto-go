@@ -1,3 +1,4 @@
+import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -94,10 +95,25 @@ async def test_cross_origin_requests_from_the_allowed_origins() -> None:
 
 
 async def test_warns_when_no_api_keys_are_configured(json_logs: LogRecords) -> None:
-    app = create_app(Settings())
+    app = create_app(Settings(metrics_port=0))
 
     async with app.router.lifespan_context(app):
         pass
 
     [record] = [r for r in json_logs() if r["level"] == "WARNING"]
     assert record["msg"] == "no API keys configured, every write will be refused"
+
+
+async def test_metrics_are_served_on_their_own_port(settings: Settings) -> None:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    app = create_app(settings.model_copy(update={"http_host": "127.0.0.1", "metrics_port": port}))
+
+    async with app.router.lifespan_context(app), httpx.AsyncClient() as client:
+        metrics = await client.get(f"http://127.0.0.1:{port}/metrics")
+
+    assert metrics.status_code == 200
+    assert "bookreviews_http_requests_total" in metrics.text
+    async with client_for(app) as api:
+        assert (await api.get("/metrics")).status_code == 404

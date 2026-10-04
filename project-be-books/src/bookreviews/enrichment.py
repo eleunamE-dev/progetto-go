@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import time
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from typing import Protocol
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from bookreviews import metrics
 from bookreviews.catalog import Book, BookCatalog, BookNotFoundError, CatalogUnavailableError
 from bookreviews.logs import request_id_var
 from bookreviews.queue import (
@@ -48,6 +50,8 @@ class EnrichmentRepository(Protocol):
     async def expire_pending(self, *, created_before: datetime, at: datetime) -> int: ...
 
     async def forget_idempotency_keys(self, *, created_before: datetime) -> int: ...
+
+    async def pending_summary(self) -> tuple[int, datetime | None]: ...
 
 
 class Parking(Protocol):
@@ -105,9 +109,11 @@ class MessageHandler:
         self._idle.clear()
         request_id = message.headers.get(REQUEST_ID_HEADER)
         token = request_id_var.set(request_id if isinstance(request_id, str) else uuid.uuid4().hex)
+        started = time.perf_counter()
         try:
             await self._handle(message)
         finally:
+            metrics.enrichment_duration.observe(time.perf_counter() - started)
             request_id_var.reset(token)
             self._active -= 1
             if self._active == 0:
@@ -134,6 +140,7 @@ class MessageHandler:
             logger.exception("unexpected error while enriching a review", extra=context)
             await self._retry_or_give_up(message, number, context)
         else:
+            metrics.enrichments.labels(outcome.value).inc()
             logger.info("review processed", extra=context | {"outcome": outcome.value})
             await message.ack()
 
@@ -145,8 +152,10 @@ class MessageHandler:
                 "could not park a malformed message, retrying later",
                 extra={"error": str(exc)},
             )
+            metrics.enrichments.labels("retried").inc()
             await message.reject(requeue=False)
             return
+        metrics.enrichments.labels("parked").inc()
         logger.error(
             "malformed message parked",
             extra={"queue": self._topology.parking_queue, "reason": reason},
@@ -157,9 +166,11 @@ class MessageHandler:
         self, message: Delivery, number: int, context: dict[str, object]
     ) -> None:
         if number < self._max_attempts:
+            metrics.enrichments.labels("retried").inc()
             logger.warning("enrichment failed, retrying later", extra=context)
             await message.reject(requeue=False)
         else:
+            metrics.enrichments.labels("gave_up").inc()
             logger.error("enrichment failed, left to the sweeper", extra=context)
             await message.ack()
 
@@ -190,9 +201,11 @@ class Sweeper:
         now = self._clock()
         expired = await self._reviews.expire_pending(created_before=now - self._deadline, at=now)
         if expired:
+            metrics.sweeper_actions.labels("expired").inc(expired)
             logger.warning("gave up on reviews pending for too long", extra={"count": expired})
         forgotten = await self._reviews.forget_idempotency_keys(created_before=now - self._key_ttl)
         if forgotten:
+            metrics.sweeper_actions.labels("keys_forgotten").inc(forgotten)
             logger.info("forgot old idempotency keys", extra={"count": forgotten})
         stale = await self._reviews.stale_pending(
             queued_before=now - self._stale_after, limit=SWEEP_BATCH_SIZE
@@ -209,7 +222,13 @@ class Sweeper:
             queued.append(review_id)
         await self._reviews.mark_queued(queued, now)
         if queued:
+            metrics.sweeper_actions.labels("requeued").inc(len(queued))
             logger.info("queued stale reviews again", extra={"count": len(queued)})
+        pending, oldest = await self._reviews.pending_summary()
+        metrics.pending_reviews.set(pending)
+        metrics.oldest_pending_review_age.set(
+            0 if oldest is None else (now - oldest).total_seconds()
+        )
         return len(queued)
 
     async def run(self, interval: float, stop: asyncio.Event) -> None:

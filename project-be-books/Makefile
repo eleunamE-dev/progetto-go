@@ -3,6 +3,7 @@
 TEST_DATABASE_URL ?= mysql+aiomysql://root:rootpassword@localhost:3306/bookreviews_test
 TEST_RABBITMQ_URL ?= amqp://user:password@localhost:5672/
 MIGRATION_DATABASE_URL ?= mysql+aiomysql://migrator:migrator-password@localhost:3306/bookreviews
+PROMTOOL = docker run --rm --entrypoint promtool -v "$(CURDIR)/deploy/observability:/etc/prometheus" -w /etc/prometheus prom/prometheus:v3.15.0
 
 .PHONY: help
 help: ## List the available targets
@@ -55,6 +56,15 @@ fmt: ## Format the code and apply safe lint fixes
 .PHONY: up
 up: ## Build and start the whole stack with Docker Compose
 	docker compose up --build --detach --wait
+
+.PHONY: observability
+observability: ## Start the stack with Prometheus, Grafana and Jaeger
+	docker compose -f docker-compose.yaml -f docker-compose.observability.yaml up --build --detach --wait
+
+.PHONY: alerts
+alerts: ## Check the Prometheus configuration and run the alert rule tests
+	$(PROMTOOL) check config prometheus.yml
+	$(PROMTOOL) test rules alerts.test.yml
 
 .PHONY: down
 down: ## Stop the stack (data volumes are kept)

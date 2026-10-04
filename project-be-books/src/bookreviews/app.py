@@ -18,8 +18,10 @@ from bookreviews.middleware import (
     RequestContextMiddleware,
     SecurityHeadersMiddleware,
 )
+from bookreviews.ops import OpsServer
 from bookreviews.problems import ProblemDetails, register_problem_handlers
 from bookreviews.queue import RabbitQueue
+from bookreviews.telemetry import untraced
 from bookreviews.wiring import build_catalog, build_engine
 
 logger = logging.getLogger("bookreviews.health")
@@ -31,6 +33,8 @@ def create_app(settings: Settings) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if not settings.api_keys:
             auth_logger.warning("no API keys configured, every write will be refused")
+        ops = OpsServer(settings.http_host, settings.metrics_port)
+        await ops.start()
         engine = build_engine(settings)
         queue = RabbitQueue(settings.rabbitmq_url.get_secret_value())
         try:
@@ -45,6 +49,7 @@ def create_app(settings: Settings) -> FastAPI:
         finally:
             await queue.close()
             await engine.dispose()
+            await ops.close()
 
     app = FastAPI(
         title="Book reviews",
@@ -57,6 +62,13 @@ def create_app(settings: Settings) -> FastAPI:
         docs_url="/docs" if settings.api_docs_enabled else None,
         redoc_url="/redoc" if settings.api_docs_enabled else None,
         openapi_url="/openapi.json" if settings.api_docs_enabled else None,
+        telemetry={
+            "tracing": settings.tracing_enabled,
+            "metrics": False,
+            "logs": False,
+            "auto_configure": False,
+            "exclude": untraced,
+        },
     )
     app.state.api_keys = ApiKeys(settings.api_keys)
     app.add_middleware(BodySizeLimitMiddleware, max_size=settings.http_max_body_size)

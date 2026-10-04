@@ -1,4 +1,5 @@
 import asyncio
+import socket
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -6,6 +7,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
 import aio_pika
+import httpx
 import pytest
 from pydantic import SecretStr
 
@@ -238,7 +240,15 @@ async def test_malformed_messages_are_parked(
 async def test_serve_starts_and_stops(
     database_url: str, rabbitmq_url: str, json_logs: LogRecords
 ) -> None:
-    settings = Settings(database_url=SecretStr(database_url), rabbitmq_url=SecretStr(rabbitmq_url))
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    settings = Settings(
+        database_url=SecretStr(database_url),
+        rabbitmq_url=SecretStr(rabbitmq_url),
+        http_host="127.0.0.1",
+        metrics_port=port,
+    )
     stop = asyncio.Event()
 
     serving = asyncio.create_task(serve(settings, stop))
@@ -247,8 +257,14 @@ async def test_serve_starts_and_stops(
             if any(r["msg"] == "worker started" for r in json_logs()):
                 break
             await asyncio.sleep(0.05)
+    async with httpx.AsyncClient() as client:
+        health = await client.get(f"http://127.0.0.1:{port}/healthz")
+        metrics = await client.get(f"http://127.0.0.1:{port}/metrics")
     stop.set()
     await asyncio.wait_for(serving, timeout=10)
+
+    assert health.status_code == 200
+    assert "bookreviews_enrichments_total" in metrics.text
 
     assert [r["msg"] for r in json_logs() if r["logger"] == "bookreviews.worker"] == [
         "worker started",

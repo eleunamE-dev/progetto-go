@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     http_port: int = Field(default=8080, ge=1, le=65535)
     http_shutdown_timeout: int = Field(default=15, gt=0)
     http_max_body_size: int = Field(default=65_536, gt=0)
+    metrics_port: int = Field(default=9100, ge=0, le=65535)
+    otel_exporter_otlp_endpoint: HttpUrl | None = None
     api_keys: dict[ClientName, Annotated[list[KeyDigest], Field(min_length=1)]] = Field(
         default_factory=dict, repr=False
     )
@@ -52,6 +54,10 @@ class Settings(BaseSettings):
     sweep_interval: float = Field(default=60, gt=0)
     sweep_after: float = Field(default=600, gt=0)
     worker_shutdown_timeout: float = Field(default=15, gt=0)
+
+    @property
+    def tracing_enabled(self) -> bool:
+        return self.otel_exporter_otlp_endpoint is not None
 
     @field_validator("log_level", mode="before")
     @classmethod

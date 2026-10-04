@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Protocol
 
+from bookreviews import metrics
 from bookreviews.catalog import Book, BookCatalog
 
 logger = logging.getLogger("bookreviews.reviews")
@@ -192,6 +193,7 @@ class ReviewService:
             owner=owner,
         )
         await self._repository.add(review, key)
+        metrics.reviews_submitted.labels("created").inc()
         try:
             await self._queue.enqueue(review.id)
         except QueueUnavailableError as exc:
@@ -208,6 +210,7 @@ class ReviewService:
         review, fingerprint = found
         if fingerprint != key.fingerprint:
             raise IdempotencyKeyReusedError(key.value)
+        metrics.reviews_submitted.labels("replayed").inc()
         logger.info(
             "repeated request answered with its review", extra={"review_id": str(review.id)}
         )

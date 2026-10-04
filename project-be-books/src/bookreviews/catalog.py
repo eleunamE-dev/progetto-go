@@ -8,6 +8,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from bookreviews import metrics
+
 logger = logging.getLogger("bookreviews.catalog")
 
 
@@ -102,8 +104,10 @@ class CachedCatalog:
     async def get_book(self, book_id: int) -> Book:
         cached = self._books.get(book_id)
         if cached is not None and cached[0] > self._clock():
+            metrics.catalog_cache_lookups.labels("hit").inc()
             self._books.move_to_end(book_id)
             return cached[1]
+        metrics.catalog_cache_lookups.labels("miss").inc()
         book = await self._inner.get_book(book_id)
         self._remember(book)
         return book
@@ -173,6 +177,7 @@ class ResilientCatalog:
             return False
         remaining = self._opened_at + self._options.reset_timeout - self._clock()
         if remaining > 0 or self._probing:
+            metrics.catalog_rejections.labels("circuit_open").inc()
             raise CatalogCircuitOpenError(math.ceil(max(remaining, 1)))
         self._probing = True
         return True
@@ -183,6 +188,7 @@ class ResilientCatalog:
             async with asyncio.timeout(self._options.queue_timeout):
                 await self._slots.acquire()
         except TimeoutError:
+            metrics.catalog_rejections.labels("busy").inc()
             raise CatalogBusyError("too many requests to the catalog are in progress") from None
         try:
             yield
@@ -193,6 +199,7 @@ class ResilientCatalog:
         self._failures += 1
         if self._opened_at is not None or self._failures >= self._options.failure_threshold:
             self._opened_at = self._clock()
+            metrics.catalog_circuit_open.set(1)
             logger.warning(
                 "catalog circuit opened",
                 extra={"failures": self._failures, "reset_timeout": self._options.reset_timeout},
@@ -200,6 +207,40 @@ class ResilientCatalog:
 
     def _record_success(self) -> None:
         if self._opened_at is not None:
+            metrics.catalog_circuit_open.set(0)
             logger.info("catalog circuit closed")
         self._failures = 0
         self._opened_at = None
+
+
+class MeasuredCatalog:
+    def __init__(self, inner: BookCatalog) -> None:
+        self._inner = inner
+
+    async def search(self, query: str, page: int = 1) -> SearchResult:
+        return await self._measure("search", lambda: self._inner.search(query, page))
+
+    async def get_book(self, book_id: int) -> Book:
+        return await self._measure("get_book", lambda: self._inner.get_book(book_id))
+
+    async def _measure[T](self, operation: str, call: Callable[[], Awaitable[T]]) -> T:
+        outcome = "error"
+        started = time.perf_counter()
+        try:
+            result = await call()
+            outcome = "ok"
+        except CatalogTimeoutError:
+            outcome = "timeout"
+            raise
+        except CatalogUnavailableError:
+            outcome = "unavailable"
+            raise
+        except CatalogError:
+            outcome = "not_found"
+            raise
+        finally:
+            metrics.catalog_requests.labels(operation, outcome).inc()
+            metrics.catalog_request_duration.labels(operation).observe(
+                time.perf_counter() - started
+            )
+        return result
