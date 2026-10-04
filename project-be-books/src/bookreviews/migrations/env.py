@@ -5,7 +5,7 @@ from sqlalchemy import Connection, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from bookreviews.config import Settings
-from bookreviews.database import MIGRATION_LOCK_TIMEOUT, Base
+from bookreviews.database import MIGRATION_LOCK_TIMEOUT, Base, logger, newer_than_release
 
 
 def database_url() -> str:
@@ -26,6 +26,13 @@ def run_migrations(connection: Connection) -> None:
         raise RuntimeError(f"another migration held the lock {lock!r} for more than {timeout} s")
     try:
         context.configure(connection=connection, target_metadata=Base.metadata)
+        current = context.get_context().get_current_revision()
+        if newer_than_release(context.script, current):
+            logger.warning(
+                "database schema newer than this release, nothing to migrate",
+                extra={"current": current},
+            )
+            return
         with context.begin_transaction():
             context.run_migrations()
     finally:

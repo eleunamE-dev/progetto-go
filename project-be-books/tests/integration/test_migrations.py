@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 from alembic import command
+from alembic.script import ScriptDirectory
 from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -99,3 +100,21 @@ def test_waiting_for_the_schema(database_url: str, json_logs: LogRecords) -> Non
     messages = [r["msg"] for r in json_logs() if r["logger"] == "bookreviews.database"]
     assert "waiting for the database schema" in messages
     assert messages[-1] == "database schema up to date"
+
+
+def test_a_release_rolled_back_runs_on_the_newer_schema(
+    database_url: str, json_logs: LogRecords
+) -> None:
+    head = ScriptDirectory.from_config(migrations_config(database_url)).get_current_head()
+    run_sql(database_url, "UPDATE alembic_version SET version_num = '9999'")
+    try:
+        upgrade_database(database_url, lock_timeout=1)
+        asyncio.run(asyncio.wait_for(wait_for_schema(database_url, interval=0.1), timeout=10))
+        assert run_sql(database_url, "SELECT version_num FROM alembic_version") == ["9999"]
+    finally:
+        run_sql(database_url, "UPDATE alembic_version SET version_num = :head", head=head)
+
+    assert [r["msg"] for r in json_logs() if r["logger"] == "bookreviews.database"] == [
+        "database schema newer than this release, nothing to migrate",
+        "database schema newer than this release",
+    ]

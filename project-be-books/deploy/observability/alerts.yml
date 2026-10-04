@@ -9,6 +9,7 @@ groups:
         annotations:
           summary: The book reviews API does not answer
           description: Prometheus has not been able to scrape {{ $labels.instance }} for 2 minutes.
+          runbook_url: https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#bookreviewsapidown
 
       - alert: BookReviewsWorkerDown
         expr: up{job="bookreviews-worker"} == 0
@@ -18,6 +19,7 @@ groups:
         annotations:
           summary: The enrichment worker does not answer
           description: Prometheus has not been able to scrape {{ $labels.instance }} for 2 minutes; new reviews stay pending.
+          runbook_url: https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#bookreviewsworkerdown
 
       - alert: BookReviewsHighErrorRate
         expr: |
@@ -29,6 +31,7 @@ groups:
         annotations:
           summary: More than 5% of the API requests fail
           description: "{{ $value | humanizePercentage }} of the requests answered 5xx over the last 10 minutes: check the database and Gutendex."
+          runbook_url: https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#bookreviewshigherrorrate
 
       - alert: BookReviewsSlowRequests
         expr: |
@@ -41,6 +44,7 @@ groups:
         annotations:
           summary: Review requests are slow
           description: The 95th percentile of {{ $labels.route }} has been above 2 s for 10 minutes.
+          runbook_url: https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#bookreviewsslowrequests
 
       - alert: BookReviewsCatalogSuspended
         expr: max(bookreviews_catalog_circuit_open) == 1
@@ -50,6 +54,7 @@ groups:
         annotations:
           summary: Calls to Gutendex are suspended
           description: The circuit breaker has been open for 5 minutes. Searches and reviews of books not in the cache answer 503.
+          runbook_url: https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#bookreviewscatalogsuspended
 
       - alert: BookReviewsEnrichmentBacklog
         expr: max(bookreviews_oldest_pending_review_age_seconds) > 1800
@@ -59,6 +64,7 @@ groups:
         annotations:
           summary: Reviews are not being enriched
           description: The oldest pending review is {{ $value | humanizeDuration }} old. Check the worker, RabbitMQ and Gutendex.
+          runbook_url: https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#bookreviewsenrichmentbacklog
 
       - alert: BookReviewsParkedMessages
         expr: sum(increase(bookreviews_enrichments_total{outcome="parked"}[1h])) > 0
@@ -67,6 +73,7 @@ groups:
         annotations:
           summary: Malformed messages were parked
           description: The worker moved malformed messages to review.enrichment.parked in the last hour. Inspect them in the RabbitMQ management UI.
+          runbook_url: https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#bookreviewsparkedmessages
 
       - alert: BookReviewsQueuePublishFailures
         expr: sum(rate(bookreviews_queue_publish_failures_total[5m])) > 0
@@ -76,3 +83,4 @@ groups:
         annotations:
           summary: The API cannot publish to RabbitMQ
           description: Reviews are saved but not queued; the sweeper queues them once RabbitMQ is back.
+          runbook_url: https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#bookreviewsqueuepublishfailures

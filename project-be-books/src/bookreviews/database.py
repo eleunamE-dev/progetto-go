@@ -282,10 +282,16 @@ class SqlReviewRepository:
             await session.delete(row)
             return True
 
-    async def complete(self, review_id: uuid.UUID, book: Book, at: datetime) -> bool:
+    async def complete(
+        self,
+        review_id: uuid.UUID,
+        book: Book,
+        at: datetime,
+        expected_status: ReviewStatus = ReviewStatus.PENDING,
+    ) -> bool:
         async with self._sessions.begin() as session:
             row = await session.get(ReviewRow, review_id, with_for_update=True)
-            if row is None or row.status is not ReviewStatus.PENDING:
+            if row is None or row.status is not expected_status:
                 return False
             values = BookRow.values(book, at)
             upsert = mysql_insert(BookRow).values(values)
@@ -319,6 +325,18 @@ class SqlReviewRepository:
                 .order_by(ReviewRow.queued_at)
                 .limit(limit)
             )
+            return list(ids)
+
+    async def failed_reviews(
+        self, *, created_after: datetime | None, created_before: datetime | None, limit: int
+    ) -> list[uuid.UUID]:
+        query = select(ReviewRow.id).where(ReviewRow.status == ReviewStatus.FAILED)
+        if created_after is not None:
+            query = query.where(ReviewRow.created_at >= created_after)
+        if created_before is not None:
+            query = query.where(ReviewRow.created_at < created_before)
+        async with self._sessions() as session:
+            ids = await session.scalars(query.order_by(ReviewRow.created_at).limit(limit))
             return list(ids)
 
     async def expire_pending(self, *, created_before: datetime, at: datetime) -> int:
@@ -382,11 +400,22 @@ def upgrade_database(database_url: str, lock_timeout: int = MIGRATION_LOCK_TIMEO
     command.upgrade(config, "head")
 
 
+def newer_than_release(scripts: ScriptDirectory, revision: str | None) -> bool:
+    return revision is not None and all(s.revision != revision for s in scripts.walk_revisions())
+
+
 async def wait_for_schema(database_url: str, interval: float = 2) -> None:
-    head = ScriptDirectory.from_config(migrations_config(database_url)).get_current_head()
+    scripts = ScriptDirectory.from_config(migrations_config(database_url))
+    head = scripts.get_current_head()
     engine = create_async_engine(database_url, connect_args={"connect_timeout": CONNECT_TIMEOUT})
     try:
         while (current := await _schema_revision(engine)) != head:
+            if newer_than_release(scripts, current):
+                logger.warning(
+                    "database schema newer than this release",
+                    extra={"current": current, "head": head},
+                )
+                return
             logger.info("waiting for the database schema", extra={"current": current, "head": head})
             await asyncio.sleep(interval)
     finally:

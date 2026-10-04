@@ -73,6 +73,8 @@ spec:
           protocol: TCP
         - port: 5672
           protocol: TCP
+        - port: 5671
+          protocol: TCP
         - port: 443
           protocol: TCP
         - port: 4318

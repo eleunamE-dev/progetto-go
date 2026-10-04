@@ -3,7 +3,7 @@ import logging
 import sys
 from contextvars import ContextVar
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TextIO
 
 from opentelemetry import trace
 
@@ -39,7 +39,7 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(entry, default=str)
 
 
-def configure_logging(level: str) -> None:
-    handler = logging.StreamHandler(sys.stdout)
+def configure_logging(level: str, stream: TextIO | None = None) -> None:
+    handler = logging.StreamHandler(sys.stdout if stream is None else stream)
     handler.setFormatter(JsonFormatter())
     logging.basicConfig(level=level, handlers=[handler], force=True)

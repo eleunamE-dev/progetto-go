@@ -1,0 +1,10 @@
+services:
+
+  api:
+    environment:
+      API_KEYS: '{"local-dev": "ed5a18fb8f807f996d649e379d3f35f39c543a91bdbf88c492f2ebd10d4df86c", "e2e-other": "9b74d9b60b1d73904acb855e21632027a9758f33a05587580b30ce3cdca42603"}'
+
+  worker:
+    environment:
+      SWEEP_INTERVAL: "2"
+      SWEEP_AFTER: "5"

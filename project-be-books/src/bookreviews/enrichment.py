@@ -39,7 +39,13 @@ SWEEP_BATCH_SIZE = 100
 class EnrichmentRepository(Protocol):
     async def get(self, review_id: uuid.UUID) -> Review | None: ...
 
-    async def complete(self, review_id: uuid.UUID, book: Book, at: datetime) -> bool: ...
+    async def complete(
+        self,
+        review_id: uuid.UUID,
+        book: Book,
+        at: datetime,
+        expected_status: ReviewStatus = ReviewStatus.PENDING,
+    ) -> bool: ...
 
     async def fail(self, review_id: uuid.UUID, at: datetime) -> bool: ...
 
@@ -85,6 +91,19 @@ class ReviewEnricher:
             failed = await self._reviews.fail(review_id, self._clock())
             return Outcome.FAILED if failed else Outcome.SKIPPED
         completed = await self._reviews.complete(review_id, book, self._clock())
+        return Outcome.COMPLETED if completed else Outcome.SKIPPED
+
+    async def retry(self, review_id: uuid.UUID) -> Outcome:
+        review = await self._reviews.get(review_id)
+        if review is None or review.status is not ReviewStatus.FAILED:
+            return Outcome.SKIPPED
+        try:
+            book = await self._catalog.get_book(review.book_id)
+        except BookNotFoundError:
+            return Outcome.FAILED
+        completed = await self._reviews.complete(
+            review_id, book, self._clock(), expected_status=ReviewStatus.FAILED
+        )
         return Outcome.COMPLETED if completed else Outcome.SKIPPED
 
 

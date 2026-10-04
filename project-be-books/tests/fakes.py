@@ -92,8 +92,14 @@ class FakeReviewRepository:
         self.keys = {slot: entry for slot, entry in self.keys.items() if entry[0] != review_id}
         return True
 
-    async def complete(self, review_id: uuid.UUID, book: Book, at: datetime) -> bool:
-        return self._finish(review_id, ReviewStatus.COMPLETED, book)
+    async def complete(
+        self,
+        review_id: uuid.UUID,
+        book: Book,
+        at: datetime,
+        expected_status: ReviewStatus = ReviewStatus.PENDING,
+    ) -> bool:
+        return self._finish(review_id, ReviewStatus.COMPLETED, book, expected_status)
 
     async def fail(self, review_id: uuid.UUID, at: datetime) -> bool:
         return self._finish(review_id, ReviewStatus.FAILED, None)
@@ -130,9 +136,15 @@ class FakeReviewRepository:
         pending = [r.created_at for r in self.reviews.values() if r.status is ReviewStatus.PENDING]
         return len(pending), min(pending, default=None)
 
-    def _finish(self, review_id: uuid.UUID, status: ReviewStatus, book: Book | None) -> bool:
+    def _finish(
+        self,
+        review_id: uuid.UUID,
+        status: ReviewStatus,
+        book: Book | None,
+        expected_status: ReviewStatus = ReviewStatus.PENDING,
+    ) -> bool:
         review = self.reviews.get(review_id)
-        if review is None or review.status is not ReviewStatus.PENDING:
+        if review is None or review.status is not expected_status:
             return False
         self.reviews[review_id] = replace(
             review, status=status, book=book, version=review.version + 1

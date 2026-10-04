@@ -8,7 +8,7 @@ KUBECONFORM = docker run --rm -i ghcr.io/yannh/kubeconform:v0.8.0 -strict -summa
 
 .PHONY: help
 help: ## List the available targets
-	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-9s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 .PHONY: install
 install: ## Create the virtual environment with every dependency
@@ -38,6 +38,10 @@ test: ## Run the unit tests with coverage
 test-all: ## Run every test, using MariaDB and RabbitMQ from Docker Compose
 	docker compose up --detach --wait db rabbitmq
 	TEST_DATABASE_URL=$(TEST_DATABASE_URL) TEST_RABBITMQ_URL=$(TEST_RABBITMQ_URL) uv run pytest --cov
+
+.PHONY: e2e
+e2e: ## Check a fresh Compose stack end to end (stop `make up` first: same ports)
+	uv run python -m e2e.stack
 
 .PHONY: openapi
 openapi: ## Export the OpenAPI document to docs/openapi.json
@@ -76,6 +80,10 @@ manifests: ## Validate the Kubernetes overlays with kubeconform
 .PHONY: kind-up
 kind-up: ## Create a local kind cluster and deploy the local overlay on it
 	bash deploy/kubernetes/local/up.sh
+
+.PHONY: kind-verify
+kind-verify: ## Check the deployment on the local kind cluster
+	uv run python -m e2e.cluster
 
 .PHONY: kind-down
 kind-down: ## Delete the local kind cluster
