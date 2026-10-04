@@ -6,6 +6,7 @@ then adds the book's data (cover, authors, subjects, summary…) in the backgrou
 
 Python 3.14, FastAPI, MariaDB, RabbitMQ. The original assignment is in [ASSIGNMENT.md](ASSIGNMENT.md).
 
+- [Start here](#start-here)
 - [Quick start](#quick-start)
 - [A tour of the API](#a-tour-of-the-api)
 - [Endpoints](#endpoints)
@@ -18,6 +19,44 @@ Python 3.14, FastAPI, MariaDB, RabbitMQ. The original assignment is in [ASSIGNME
 - [Design notes](#design-notes)
 - [Configuration](#configuration)
 - [Development](#development)
+
+## Start here
+
+The [assignment](ASSIGNMENT.md) asks for five endpoints, data enriched asynchronously through a
+public API, an easy way to run the service, and tests. With Docker, checking it takes a few
+minutes:
+
+1. **Run it.** `docker compose up --build --wait` starts everything, see [Quick start](#quick-start).
+2. **Try it.** [A tour of the API](#a-tour-of-the-api) searches a book, reviews it, waits for the
+   enrichment, then changes and deletes the review, with `curl`. Writes need the header
+   `X-API-Key: local-dev-key`.
+3. **Test it.** `make test-all` runs the unit and integration tests against MariaDB and RabbitMQ;
+   `make e2e` checks a whole fresh stack from the outside.
+
+| The assignment asks for | Where it is |
+|---|---|
+| `GET /book/search?q=` on a public API | Gutendex, through [gutendex.py](src/bookreviews/gutendex.py) and [books.py](src/bookreviews/books.py) |
+| `POST /review`, checking the book on the API, the score and the text | [reviews.py](src/bookreviews/reviews.py): 422 naming the wrong field, otherwise 202 |
+| a reference to follow the processing | the review's ID, in the `Location` header of the 202 |
+| the enriched data saved asynchronously | RabbitMQ and the [worker](src/bookreviews/worker.py), see [How it works](#how-it-works) |
+| `GET /review/{id}`: 202 while processing, 200 with the enriched data | [reviews.py](src/bookreviews/reviews.py) |
+| `PUT` and `DELETE /review/{id}` | [reviews.py](src/bookreviews/reviews.py) |
+| tests, static analysis, coding standards | pytest, ruff, mypy in strict mode, pre-commit hooks, GitHub Actions |
+
+**Beyond the assignment.** Each addition answers a question that a service in production faces:
+- *Who may write?* API keys, and reviews that belong to the client that wrote them, see
+  [Authentication](#authentication).
+- *What if a client sends a request twice, or two clients edit at once?* Idempotency keys and
+  entity tags, see [Retries and concurrent edits](#retries-and-concurrent-edits).
+- *What if Gutendex is slow or down?* Timeouts, a cache, a circuit breaker, retries and a sweeper,
+  see [Gutendex is slow](#gutendex-is-slow) and [Asynchronous enrichment](#asynchronous-enrichment).
+- *How do we know it works?* Metrics, traces, alerts and a runbook, see
+  [Observability](#observability) and [Operations](#operations).
+- *How does it run for real?* Kubernetes manifests, verified on a local cluster, see
+  [Deploying to Kubernetes](#deploying-to-kubernetes).
+
+The pull requests of the repository follow the same path, one step at a time, from the first
+endpoint to operations.
 
 ## Quick start
 
