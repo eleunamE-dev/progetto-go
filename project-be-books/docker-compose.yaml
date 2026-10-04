@@ -28,7 +28,7 @@ services:
       start_period: 10s
 
   rabbitmq:
-    image: rabbitmq:3.13.0-management
+    image: rabbitmq:4.3.5-management
     environment:
       RABBITMQ_DEFAULT_USER: user
       RABBITMQ_DEFAULT_PASS: password
