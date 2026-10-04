@@ -426,9 +426,15 @@ How the manifests work:
   - TLS is terminated at the Gateway, plain HTTP is redirected to HTTPS, and HSTS is added.
   - Requests get 75 s; Envoy's default of 15 s would cut slow Gutendex calls.
 - **Rate limits.** An Envoy Gateway `BackendTrafficPolicy` caps each Envoy replica at 100 requests
-  per second, of which at most 20 writes; beyond that the answer is 429. Limits per client, for
-  instance per API key, need Envoy Gateway's global rate limiting, which keeps its counters in
-  Redis.
+  per second, of which at most 20 that are not `GET`, which means writes. Beyond that the answer
+  is 429, with `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers.
+  - The write rule matches "every method except `GET`". Listing `POST`, `PUT` and `DELETE` in one
+    rule makes Envoy reject the whole route configuration (duplicate rate-limit descriptors).
+  - Limits per client, for instance per API key, need Envoy Gateway's global rate limiting, which
+    keeps its counters in Redis.
+- **kind.** The local overlay makes Envoy's Service a ClusterIP, through an `EnvoyProxy` resource:
+  kind can't hand out load-balancer addresses, and the Gateway only reports itself ready once it
+  has an address.
 
 ## Design notes
 

@@ -19,16 +19,13 @@ kubectl -n envoy-gateway-system wait deployment/envoy-gateway --for=condition=Av
 kubectl apply -f "$HERE/gatewayclass.yaml"
 
 docker build --tag bookreviews:local "$PROJECT"
-for image in bookreviews:local mariadb:11.3.2 rabbitmq:3.13.0-management; do
-  docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image"
-  kind load docker-image --name "$CLUSTER" "$image"
-done
+kind load docker-image --name "$CLUSTER" bookreviews:local
 
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 certificates=$(mktemp -d)
-openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=$HOST" \
+MSYS2_ARG_CONV_EXCL="/CN=" openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=$HOST" \
   -addext "subjectAltName=DNS:$HOST" \
-  -keyout "$certificates/tls.key" -out "$certificates/tls.crt" 2>/dev/null
+  -keyout "$certificates/tls.key" -out "$certificates/tls.crt"
 kubectl -n "$NAMESPACE" create secret tls bookreviews-tls \
   --cert "$certificates/tls.crt" --key "$certificates/tls.key" --dry-run=client -o yaml | kubectl apply -f -
 rm -rf "$certificates"

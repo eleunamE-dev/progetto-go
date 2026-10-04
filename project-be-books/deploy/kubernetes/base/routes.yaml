@@ -63,9 +63,8 @@ spec:
             unit: Second
         - clientSelectors:
             - methods:
-                - value: POST
-                - value: PUT
-                - value: DELETE
+                - value: GET
+                  invert: true
           limit:
             requests: 20
             unit: Second
