@@ -168,6 +168,14 @@ curl -i localhost:8080/review/01a1023f-006d-716b-abee-f6d3e9210156
 }
 ```
 
+The worker is often quicker than a second `curl`, so the `202` can go unseen. To watch it, stop
+the worker, submit a review and read it, then start the worker and read it again:
+
+```bash
+docker compose stop worker
+docker compose start worker
+```
+
 Change it, then delete it, with the key of the client that wrote it:
 
 ```bash
@@ -673,7 +681,9 @@ The design follows from that:
 
 ## Configuration
 
-Every setting has a default that works with the Compose services on `localhost`.
+Every setting has a default that reaches the Compose services from this machine. The defaults say
+`127.0.0.1` rather than `localhost`. Compose publishes the ports on IPv4 only, and on Windows a
+connection to `localhost` tries IPv6 first: every new connection would wait about 2 seconds.
 
 | Variable | Default | |
 |---|---|---|
@@ -687,11 +697,11 @@ Every setting has a default that works with the Compose services on `localhost`.
 | `API_KEYS` | `{}` | JSON object from client names to key digests, see [Authentication](#authentication); empty means every write is refused |
 | `API_DOCS_ENABLED` | `true` | serve `/docs`, `/redoc` and `/openapi.json` |
 | `CORS_ALLOW_ORIGINS` | `[]` | JSON list of the origins allowed to call the API from a browser, e.g. `["https://shop.example.com"]` |
-| `DATABASE_URL` | `mysql+aiomysql://app:app-password@localhost:3306/bookreviews` | the migrations need an account that can change the schema |
+| `DATABASE_URL` | `mysql+aiomysql://app:app-password@127.0.0.1:3306/bookreviews` | the migrations need an account that can change the schema |
 | `DATABASE_POOL_SIZE` | `5` | connections each process keeps open |
 | `DATABASE_MAX_OVERFLOW` | `10` | extra connections opened under load |
 | `DATABASE_POOL_TIMEOUT` | `10` | seconds a request waits for a free connection |
-| `RABBITMQ_URL` | `amqp://user:password@localhost:5672/` | |
+| `RABBITMQ_URL` | `amqp://user:password@127.0.0.1:5672/` | |
 | `GUTENDEX_BASE_URL` | `https://gutendex.com` | |
 | `GUTENDEX_TIMEOUT` | `60` | seconds |
 | `GUTENDEX_MAX_CONCURRENCY` | `8` | calls to Gutendex in progress at the same time, per process |

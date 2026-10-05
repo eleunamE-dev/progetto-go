@@ -33,12 +33,12 @@ class Settings(BaseSettings):
     api_docs_enabled: bool = True
     cors_allow_origins: list[Origin] = Field(default_factory=list)
     database_url: SecretStr = SecretStr(
-        "mysql+aiomysql://app:app-password@localhost:3306/bookreviews"
+        "mysql+aiomysql://app:app-password@127.0.0.1:3306/bookreviews"
     )
     database_pool_size: int = Field(default=5, gt=0)
     database_max_overflow: int = Field(default=10, ge=0)
     database_pool_timeout: float = Field(default=10, gt=0)
-    rabbitmq_url: SecretStr = SecretStr("amqp://user:password@localhost:5672/")
+    rabbitmq_url: SecretStr = SecretStr("amqp://user:password@127.0.0.1:5672/")
     gutendex_base_url: HttpUrl = HttpUrl("https://gutendex.com")
     gutendex_timeout: float = Field(default=60, gt=0)
     gutendex_max_concurrency: int = Field(default=8, gt=0)

@@ -62,7 +62,7 @@ def test_defaults_need_no_configuration() -> None:
     assert settings.api_docs_enabled
     assert settings.cors_allow_origins == []
     assert settings.database_url.get_secret_value() == (
-        "mysql+aiomysql://app:app-password@localhost:3306/bookreviews"
+        "mysql+aiomysql://app:app-password@127.0.0.1:3306/bookreviews"
     )
     assert settings.database_pool_size == 5
     assert settings.database_max_overflow == 10
@@ -75,7 +75,7 @@ def test_defaults_need_no_configuration() -> None:
     assert settings.gutendex_reset_timeout == 30
     assert settings.catalog_cache_ttl == 3600
     assert settings.catalog_cache_size == 10_000
-    assert settings.rabbitmq_url.get_secret_value() == "amqp://user:password@localhost:5672/"
+    assert settings.rabbitmq_url.get_secret_value() == "amqp://user:password@127.0.0.1:5672/"
     assert settings.worker_concurrency == 4
     assert settings.enrichment_max_attempts == 5
     assert settings.enrichment_deadline == 86_400

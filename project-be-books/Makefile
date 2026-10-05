@@ -1,8 +1,8 @@
 .DEFAULT_GOAL := help
 
-TEST_DATABASE_URL ?= mysql+aiomysql://root:rootpassword@localhost:3306/bookreviews_test
-TEST_RABBITMQ_URL ?= amqp://user:password@localhost:5672/
-MIGRATION_DATABASE_URL ?= mysql+aiomysql://migrator:migrator-password@localhost:3306/bookreviews
+TEST_DATABASE_URL ?= mysql+aiomysql://root:rootpassword@127.0.0.1:3306/bookreviews_test
+TEST_RABBITMQ_URL ?= amqp://user:password@127.0.0.1:5672/
+MIGRATION_DATABASE_URL ?= mysql+aiomysql://migrator:migrator-password@127.0.0.1:3306/bookreviews
 PROMTOOL = docker run --rm --entrypoint promtool -v "$(CURDIR)/deploy/observability:/etc/prometheus" -w /etc/prometheus prom/prometheus:v3.15.0
 KUBECONFORM = docker run --rm -i ghcr.io/yannh/kubeconform:v0.8.0 -strict -summary -kubernetes-version 1.34.0 -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 
