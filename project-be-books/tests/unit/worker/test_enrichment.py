@@ -10,14 +10,10 @@ from sqlalchemy.exc import OperationalError
 
 from bookreviews.adapters.queue import Topology
 from bookreviews.core.catalog import Book, CatalogTimeoutError, CatalogUnavailableError, Person
+from bookreviews.core.enrichment import Outcome, ReviewEnricher
 from bookreviews.core.reviews import IdempotencyKey, Review, ReviewStatus
-from bookreviews.worker.enrichment import (
-    MessageHandler,
-    Outcome,
-    ReviewEnricher,
-    Sweeper,
-    SweepPolicy,
-)
+from bookreviews.worker.messages import MessageHandler
+from bookreviews.worker.sweeper import Sweeper, SweepPolicy
 from tests.conftest import LogRecords
 from tests.fakes import FakeCatalog, FakeMessage, FakeQueue, FakeReviewRepository
 

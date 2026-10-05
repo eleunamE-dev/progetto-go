@@ -3,29 +3,25 @@ import contextlib
 import logging
 import signal
 from dataclasses import dataclass, field
-from typing import Self
+from typing import Protocol, Self
 
 import aio_pika
 from aio_pika.abc import AbstractRobustConnection
 from aio_pika.exceptions import CONNECTION_EXCEPTIONS
 
-from bookreviews.adapters.database import SqlReviewRepository, create_sessions
+from bookreviews.adapters.database.connections import create_sessions
+from bookreviews.adapters.database.repository import SqlReviewRepository
 from bookreviews.adapters.gutendex import GutendexClient
 from bookreviews.adapters.queue import CONNECT_TIMEOUT, RabbitQueue, Topology
 from bookreviews.config import Settings
 from bookreviews.core.catalog import BookCatalog
+from bookreviews.core.enrichment import EnrichmentRepository, ReviewEnricher
 from bookreviews.observability.ops import OpsServer
 from bookreviews.wiring import build_catalog, build_engine
-from bookreviews.worker.enrichment import (
-    EnrichmentRepository,
-    MessageHandler,
-    ReviewEnricher,
-    Sweeper,
-    SweepPolicy,
-)
+from bookreviews.worker.messages import MessageHandler
+from bookreviews.worker.sweeper import Sweeper, SweepPolicy, SweepRepository
 
 logger = logging.getLogger("bookreviews.worker")
-
 CONNECT_RETRY_DELAY = 1.0
 CONNECT_RETRY_LIMIT = 30.0
 
@@ -70,9 +66,13 @@ async def connect(rabbitmq_url: str, stop: asyncio.Event) -> AbstractRobustConne
     return None
 
 
+class WorkerRepository(EnrichmentRepository, SweepRepository, Protocol):
+    pass
+
+
 async def consume(
     rabbitmq_url: str,
-    reviews: EnrichmentRepository,
+    reviews: WorkerRepository,
     catalog: BookCatalog,
     stop: asyncio.Event,
     options: WorkerOptions,

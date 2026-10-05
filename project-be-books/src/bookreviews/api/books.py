@@ -1,9 +1,10 @@
 from http import HTTPStatus
 from typing import Annotated, Self
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import AfterValidator, BaseModel
 
+from bookreviews.api.dependencies import get_catalog
 from bookreviews.api.problems import (
     CATALOG_ERROR_RESPONSES,
     VALIDATION_ERROR_RESPONSES,
@@ -12,13 +13,7 @@ from bookreviews.api.problems import (
 from bookreviews.core.catalog import Book, BookCatalog, PageOutOfRangeError
 
 MAX_QUERY_LENGTH = 200
-
 router = APIRouter(tags=["books"])
-
-
-def get_catalog(request: Request) -> BookCatalog:
-    catalog: BookCatalog = request.app.state.catalog
-    return catalog
 
 
 def _collapse_whitespace(value: str) -> str:

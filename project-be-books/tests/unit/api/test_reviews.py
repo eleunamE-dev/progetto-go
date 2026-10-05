@@ -7,10 +7,10 @@ import httpx
 import pytest
 from fastapi import FastAPI, Request
 
-from bookreviews.adapters.database import SqlReviewRepository, create_engine, create_sessions
+from bookreviews.adapters.database.connections import create_engine, create_sessions
+from bookreviews.adapters.database.repository import SqlReviewRepository
 from bookreviews.api.app import create_app
-from bookreviews.api.books import get_catalog
-from bookreviews.api.reviews import get_review_queue, get_review_repository
+from bookreviews.api.dependencies import get_catalog, get_review_queue, get_review_repository
 from bookreviews.config import Settings
 from bookreviews.core.catalog import Book, CatalogCircuitOpenError, CatalogTimeoutError, Person
 from bookreviews.core.reviews import Review, ReviewStatus

@@ -7,11 +7,13 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from bookreviews.adapters.database import SqlReviewRepository, create_engine, wait_for_schema
+from bookreviews.adapters.catalog import CachedCatalog
+from bookreviews.adapters.database.connections import create_engine
+from bookreviews.adapters.database.repository import SqlReviewRepository
+from bookreviews.adapters.database.schema import wait_for_schema
 from bookreviews.adapters.queue import RabbitQueue
 from bookreviews.api.app import create_app
 from bookreviews.config import Settings
-from bookreviews.core.catalog import CachedCatalog
 from tests.conftest import LogRecords
 
 

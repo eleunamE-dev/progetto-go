@@ -3,14 +3,13 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from bookreviews.adapters.catalog import ResilienceOptions, ResilientCatalog
 from bookreviews.core.catalog import (
     Book,
     BookNotFoundError,
     CatalogBusyError,
     CatalogCircuitOpenError,
     CatalogTimeoutError,
-    ResilienceOptions,
-    ResilientCatalog,
     SearchResult,
 )
 from tests.conftest import LogRecords

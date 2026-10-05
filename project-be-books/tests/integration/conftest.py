@@ -9,12 +9,9 @@ import pytest
 from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from bookreviews.adapters.database import (
-    SqlReviewRepository,
-    create_engine,
-    create_sessions,
-    upgrade_database,
-)
+from bookreviews.adapters.database.connections import create_engine, create_sessions
+from bookreviews.adapters.database.repository import SqlReviewRepository
+from bookreviews.adapters.database.schema import upgrade_database
 from bookreviews.adapters.queue import Topology
 
 _SAFE_NAME = re.compile(r"\w+")

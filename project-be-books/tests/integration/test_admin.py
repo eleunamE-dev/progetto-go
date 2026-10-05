@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import SecretStr
 
-from bookreviews.adapters.database import SqlReviewRepository
+from bookreviews.adapters.database.repository import SqlReviewRepository
 from bookreviews.cli import admin
 from bookreviews.config import Settings
 from bookreviews.core.catalog import Book, BookCatalog

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 import uvicorn
 
-from bookreviews.adapters.database import upgrade_database, wait_for_schema
+from bookreviews.adapters.database.schema import upgrade_database, wait_for_schema
 from bookreviews.api.app import create_app
 from bookreviews.config import Settings
 from bookreviews.observability.logs import configure_logging

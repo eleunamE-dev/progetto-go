@@ -3,7 +3,7 @@ import pytest
 from fastapi import FastAPI, Request
 
 from bookreviews.api.app import create_app
-from bookreviews.api.books import get_catalog
+from bookreviews.api.dependencies import get_catalog
 from bookreviews.config import Settings
 from bookreviews.core.catalog import (
     Book,

@@ -13,8 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from bookreviews import wiring
 from bookreviews.api.app import create_app
-from bookreviews.api.books import get_catalog
-from bookreviews.api.reviews import get_review_queue, get_review_repository
+from bookreviews.api.dependencies import get_catalog, get_review_queue, get_review_repository
 from bookreviews.config import Settings
 from bookreviews.observability import telemetry
 from tests.conftest import API_KEY, LogRecords

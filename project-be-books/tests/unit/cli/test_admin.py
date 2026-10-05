@@ -8,8 +8,8 @@ import pytest
 from bookreviews.cli import admin
 from bookreviews.config import Settings
 from bookreviews.core.catalog import Book, CatalogUnavailableError
+from bookreviews.core.enrichment import ReviewEnricher
 from bookreviews.core.reviews import Review, ReviewStatus
-from bookreviews.worker.enrichment import ReviewEnricher
 from tests.fakes import FakeCatalog, FakeReviewRepository
 
 NOW = datetime(2026, 10, 4, 12, 0, tzinfo=UTC)

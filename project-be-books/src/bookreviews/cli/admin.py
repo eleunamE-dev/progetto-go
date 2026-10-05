@@ -6,13 +6,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from bookreviews.adapters.database import SqlReviewRepository, create_sessions
+from bookreviews.adapters.database.connections import create_sessions
+from bookreviews.adapters.database.repository import SqlReviewRepository
 from bookreviews.adapters.gutendex import GutendexClient
 from bookreviews.config import Settings
 from bookreviews.core.catalog import CatalogUnavailableError
+from bookreviews.core.enrichment import Outcome, ReviewEnricher
 from bookreviews.observability.logs import configure_logging
 from bookreviews.wiring import build_catalog, build_engine
-from bookreviews.worker.enrichment import Outcome, ReviewEnricher
 
 RETRY_CONCURRENCY = 4
 

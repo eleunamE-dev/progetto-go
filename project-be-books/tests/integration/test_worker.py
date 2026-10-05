@@ -11,7 +11,7 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from bookreviews.adapters.database import SqlReviewRepository
+from bookreviews.adapters.database.repository import SqlReviewRepository
 from bookreviews.adapters.queue import RabbitQueue, Topology
 from bookreviews.config import Settings
 from bookreviews.core.catalog import Book, BookCatalog, CatalogUnavailableError, Person

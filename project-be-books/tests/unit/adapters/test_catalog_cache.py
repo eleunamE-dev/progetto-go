@@ -2,7 +2,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from bookreviews.core.catalog import Book, BookNotFoundError, CachedCatalog, SearchResult
+from bookreviews.adapters.catalog import CachedCatalog
+from bookreviews.core.catalog import Book, BookNotFoundError, SearchResult
 from tests.fakes import FakeCatalog
 
 PRIDE_AND_PREJUDICE = Book(id=1342, title="Pride and Prejudice")

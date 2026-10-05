@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from bookreviews.adapters.database import SqlReviewRepository
+from bookreviews.adapters.database.repository import SqlReviewRepository
 from bookreviews.core.catalog import Book, Person
 from bookreviews.core.reviews import (
     IdempotencyKey,

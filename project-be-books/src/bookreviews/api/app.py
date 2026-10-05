@@ -7,7 +7,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 
-from bookreviews.adapters.database import SqlReviewRepository, create_sessions, ping
+from bookreviews.adapters.database.connections import create_sessions, ping
+from bookreviews.adapters.database.repository import SqlReviewRepository
 from bookreviews.adapters.gutendex import GutendexClient
 from bookreviews.adapters.queue import RabbitQueue
 from bookreviews.api import books, reviews

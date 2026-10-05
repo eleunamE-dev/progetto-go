@@ -4,7 +4,8 @@ from alembic import context
 from sqlalchemy import Connection, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from bookreviews.adapters.database import MIGRATION_LOCK_TIMEOUT, Base, logger, newer_than_release
+from bookreviews.adapters.database.models import Base
+from bookreviews.adapters.database.schema import MIGRATION_LOCK_TIMEOUT, logger, newer_than_release
 from bookreviews.config import Settings
 
 

@@ -7,21 +7,18 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+from bookreviews.adapters.catalog import CachedCatalog, ResilienceOptions, ResilientCatalog
 from bookreviews.adapters.queue import RabbitQueue, Topology
-from bookreviews.api.books import get_catalog
-from bookreviews.api.reviews import get_review_queue, get_review_repository
+from bookreviews.api.dependencies import get_catalog, get_review_queue, get_review_repository
 from bookreviews.core.catalog import (
     Book,
     BookNotFoundError,
-    CachedCatalog,
     CatalogBusyError,
     CatalogCircuitOpenError,
     CatalogTimeoutError,
     CatalogUnavailableError,
-    MeasuredCatalog,
-    ResilienceOptions,
-    ResilientCatalog,
 )
+from bookreviews.core.enrichment import ReviewEnricher
 from bookreviews.core.reviews import (
     IdempotencyKey,
     QueueUnavailableError,
@@ -29,7 +26,9 @@ from bookreviews.core.reviews import (
     ReviewService,
     ReviewStatus,
 )
-from bookreviews.worker.enrichment import MessageHandler, ReviewEnricher, Sweeper, SweepPolicy
+from bookreviews.observability.catalog import MeasuredCatalog
+from bookreviews.worker.messages import MessageHandler
+from bookreviews.worker.sweeper import Sweeper, SweepPolicy
 from tests.conftest import sample
 from tests.fakes import FakeCatalog, FakeMessage, FakeQueue, FakeReviewRepository
 
