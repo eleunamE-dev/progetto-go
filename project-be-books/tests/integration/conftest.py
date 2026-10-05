@@ -9,13 +9,13 @@ import pytest
 from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from bookreviews.database import (
+from bookreviews.adapters.database import (
     SqlReviewRepository,
     create_engine,
     create_sessions,
     upgrade_database,
 )
-from bookreviews.queue import Topology
+from bookreviews.adapters.queue import Topology
 
 _SAFE_NAME = re.compile(r"\w+")
 

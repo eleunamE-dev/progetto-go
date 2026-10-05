@@ -11,13 +11,13 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from bookreviews.catalog import Book, BookCatalog, CatalogUnavailableError, Person
+from bookreviews.adapters.database import SqlReviewRepository
+from bookreviews.adapters.queue import RabbitQueue, Topology
 from bookreviews.config import Settings
-from bookreviews.database import SqlReviewRepository
-from bookreviews.logs import request_id_var
-from bookreviews.queue import RabbitQueue, Topology
-from bookreviews.review_service import Review, ReviewStatus
-from bookreviews.worker import WorkerOptions, consume, serve
+from bookreviews.core.catalog import Book, BookCatalog, CatalogUnavailableError, Person
+from bookreviews.core.reviews import Review, ReviewStatus
+from bookreviews.observability.logs import request_id_var
+from bookreviews.worker.runner import WorkerOptions, consume, serve
 from tests.conftest import LogRecords
 from tests.fakes import FakeCatalog
 

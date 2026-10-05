@@ -3,8 +3,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 
-from bookreviews.catalog import Book, BookNotFoundError, SearchResult
-from bookreviews.review_service import (
+from bookreviews.core.catalog import Book, BookNotFoundError, SearchResult
+from bookreviews.core.reviews import (
     Condition,
     IdempotencyKey,
     IdempotencyKeyTakenError,

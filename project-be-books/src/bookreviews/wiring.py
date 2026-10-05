@@ -1,15 +1,15 @@
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from bookreviews.catalog import (
+from bookreviews.adapters.database import create_engine
+from bookreviews.config import Settings
+from bookreviews.core.catalog import (
     BookCatalog,
     CachedCatalog,
     MeasuredCatalog,
     ResilienceOptions,
     ResilientCatalog,
 )
-from bookreviews.config import Settings
-from bookreviews.database import create_engine
-from bookreviews.telemetry import trace_engine
+from bookreviews.observability.telemetry import trace_engine
 
 
 def build_engine(settings: Settings) -> AsyncEngine:

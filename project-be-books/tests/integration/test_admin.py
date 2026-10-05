@@ -7,11 +7,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import SecretStr
 
-from bookreviews import admin
-from bookreviews.catalog import Book, BookCatalog
+from bookreviews.adapters.database import SqlReviewRepository
+from bookreviews.cli import admin
 from bookreviews.config import Settings
-from bookreviews.database import SqlReviewRepository
-from bookreviews.review_service import Review, ReviewStatus
+from bookreviews.core.catalog import Book, BookCatalog
+from bookreviews.core.reviews import Review, ReviewStatus
 from tests.fakes import FakeCatalog
 
 pytestmark = pytest.mark.integration

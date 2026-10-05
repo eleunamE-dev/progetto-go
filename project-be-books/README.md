@@ -4,7 +4,7 @@ A service to search the books of [Project Gutenberg](https://www.gutenberg.org),
 [Gutendex](https://gutendex.com) API, and review them. A review is accepted right away; a worker
 then adds the book's data (cover, authors, subjects, summary…) in the background.
 
-Python 3.14, FastAPI, MariaDB, RabbitMQ. The original assignment is in [ASSIGNMENT.md](ASSIGNMENT.md).
+Python 3.14, FastAPI, MariaDB, RabbitMQ. The original assignment is in [assignment.md](docs/assignment.md).
 
 - [Start here](#start-here)
 - [Quick start](#quick-start)
@@ -22,7 +22,7 @@ Python 3.14, FastAPI, MariaDB, RabbitMQ. The original assignment is in [ASSIGNME
 
 ## Start here
 
-The [assignment](ASSIGNMENT.md) asks for five endpoints, data enriched asynchronously through a
+The [assignment](docs/assignment.md) asks for five endpoints, data enriched asynchronously through a
 public API, an easy way to run the service, and tests. With Docker, checking it takes a few
 minutes:
 
@@ -36,12 +36,12 @@ minutes:
 
 | The assignment asks for | Where it is |
 |---|---|
-| `GET /book/search?q=` on a public API | Gutendex, through [gutendex.py](src/bookreviews/gutendex.py) and [books.py](src/bookreviews/books.py) |
-| `POST /review`, checking the book on the API, the score and the text | [reviews.py](src/bookreviews/reviews.py): 422 naming the wrong field, otherwise 202 |
+| `GET /book/search?q=` on a public API | Gutendex, through [gutendex.py](src/bookreviews/adapters/gutendex.py) and [books.py](src/bookreviews/api/books.py) |
+| `POST /review`, checking the book on the API, the score and the text | [reviews.py](src/bookreviews/api/reviews.py): 422 naming the wrong field, otherwise 202 |
 | a reference to follow the processing | the review's ID, in the `Location` header of the 202 |
-| the enriched data saved asynchronously | RabbitMQ and the [worker](src/bookreviews/worker.py), see [How it works](#how-it-works) |
-| `GET /review/{id}`: 202 while processing, 200 with the enriched data | [reviews.py](src/bookreviews/reviews.py) |
-| `PUT` and `DELETE /review/{id}` | [reviews.py](src/bookreviews/reviews.py) |
+| the enriched data saved asynchronously | RabbitMQ and the [worker](src/bookreviews/worker/runner.py), see [How it works](#how-it-works) |
+| `GET /review/{id}`: 202 while processing, 200 with the enriched data | [reviews.py](src/bookreviews/api/reviews.py) |
+| `PUT` and `DELETE /review/{id}` | [reviews.py](src/bookreviews/api/reviews.py) |
 | tests, static analysis, coding standards | pytest, ruff, mypy in strict mode, pre-commit hooks, GitHub Actions |
 
 **Beyond the assignment.** Each addition answers a question that a service in production faces:
@@ -319,32 +319,44 @@ sequenceDiagram
 
 ```
 src/bookreviews/
-├── app.py              FastAPI application: lifespan, routers, health endpoints
-├── books.py            GET /book/search
-├── reviews.py          /review endpoints and their schemas
-├── review_service.py   review model and rules
-├── catalog.py          book types, BookCatalog protocol, in-memory cache, circuit breaker
-├── gutendex.py         Gutendex client
-├── wiring.py           database engine and catalog built from the settings
-├── auth.py             API keys: X-API-Key check, key generator (bookreviews-api-key)
-├── database.py         SQLAlchemy models and repository
-├── migrations/         Alembic migrations
-├── queue.py            RabbitMQ topology and publisher
-├── enrichment.py       enrichment, message handling, sweeper
-├── worker.py           worker process
-├── admin.py            maintenance commands (bookreviews-admin)
-├── problems.py         RFC 9457 error responses
-├── middleware.py       request ID, access log, body limit, security headers
-├── logs.py             JSON logging, with the trace ID when there is one
-├── metrics.py          Prometheus metrics
-├── ops.py              /metrics and /healthz on their own port
-├── telemetry.py        OpenTelemetry tracing
 ├── config.py           settings from environment variables
-├── openapi.py          OpenAPI export
-└── main.py             console scripts: bookreviews-api, -worker, -migrate
+├── wiring.py           database engine and catalog built from the settings
+├── core/               the rules, shared by the API and the worker
+│   ├── reviews.py      review model, ReviewService, the ports it needs
+│   └── catalog.py      book types, BookCatalog port, in-memory cache, circuit breaker
+├── api/                the HTTP process
+│   ├── app.py          FastAPI application: lifespan, routers, health endpoints
+│   ├── books.py        GET /book/search
+│   ├── reviews.py      /review endpoints and their schemas
+│   ├── auth.py         API keys: the X-API-Key check
+│   ├── middleware.py   request ID, access log, body limit, security headers
+│   └── problems.py     RFC 9457 error responses
+├── worker/             the enrichment process
+│   ├── enrichment.py   enrichment, message handling, sweeper
+│   └── runner.py       connection to RabbitMQ, consumption, shutdown
+├── adapters/           MariaDB, Gutendex and RabbitMQ behind the ports
+│   ├── database.py     SQLAlchemy models and repository
+│   ├── migrations/     Alembic migrations
+│   ├── gutendex.py     Gutendex client
+│   └── queue.py        RabbitMQ topology and publisher
+├── observability/
+│   ├── logs.py         JSON logging, with the trace ID when there is one
+│   ├── metrics.py      Prometheus metrics
+│   ├── telemetry.py    OpenTelemetry tracing
+│   └── ops.py          /metrics and /healthz on their own port
+└── cli/                console scripts
+    ├── main.py         bookreviews-api, -worker, -migrate
+    ├── admin.py        bookreviews-admin
+    ├── api_key.py      bookreviews-api-key
+    └── openapi.py      bookreviews-openapi
 ```
 
-The API and the worker run from the same image; each command is a console script of the package.
+`core` doesn't know about FastAPI, SQLAlchemy or aio-pika: it defines the ports (`ReviewRepository`,
+`BookCatalog`, `ReviewQueue`) that the adapters implement and the tests replace with fakes. The API
+and the worker run from the same image; each command is a console script of the package.
+
+The tests follow the same layout: `tests/unit/` mirrors `src/bookreviews/`, `tests/integration/`
+runs against MariaDB and RabbitMQ, and `tests/e2e/` checks a whole stack or cluster from the outside.
 
 ## Observability
 
@@ -726,7 +738,7 @@ services and the integration tests. `make` lists the tasks; these are the comman
 | Run the API / the worker | `uv run bookreviews-api` / `uv run bookreviews-worker` |
 | Unit tests | `uv run pytest --cov` |
 | All the tests | `make test-all` |
-| End-to-end checks on a fresh stack | `make e2e` (`uv run python -m e2e.stack`) |
+| End-to-end checks on a fresh stack | `make e2e` (`uv run python -m tests.e2e.stack`) |
 | Format, lint, types | `make fmt`, `make lint` (ruff, mypy) |
 | Git hooks, and every hook on all the files | `make hooks`, `make check` |
 | Export the OpenAPI document | `make openapi` |

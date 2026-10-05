@@ -5,13 +5,13 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from bookreviews.app import create_app
-from bookreviews.books import get_catalog
-from bookreviews.catalog import Book
+from bookreviews.adapters.database import SqlReviewRepository
+from bookreviews.api.app import create_app
+from bookreviews.api.books import get_catalog
+from bookreviews.api.reviews import get_review_queue, get_review_repository
 from bookreviews.config import Settings
-from bookreviews.database import SqlReviewRepository
-from bookreviews.review_service import Review, utc_now
-from bookreviews.reviews import get_review_queue, get_review_repository
+from bookreviews.core.catalog import Book
+from bookreviews.core.reviews import Review, utc_now
 from tests.fakes import FakeCatalog, FakeQueue
 
 pytestmark = pytest.mark.integration
