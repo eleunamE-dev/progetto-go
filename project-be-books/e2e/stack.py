@@ -469,6 +469,8 @@ class Stack:
             ({"score": 0}, "body.score"),
             ({"score": 11}, "body.score"),
             ({"score": 6.5}, "body.score"),
+            ({"score": True}, "body.score"),
+            ({"id": True}, "body.id"),
             ({"review": "ok"}, "body.review"),
             ({"review": "x" * 5001}, "body.review"),
             ({"review": "bell\u0007"}, "body.review"),

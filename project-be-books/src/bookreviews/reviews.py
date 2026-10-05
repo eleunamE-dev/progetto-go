@@ -8,7 +8,15 @@ from typing import Annotated, Any, Self
 
 from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.exceptions import RequestValidationError
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StringConstraints,
+)
+from pydantic_core import PydanticCustomError
 
 from bookreviews.auth import Client
 from bookreviews.books import get_catalog
@@ -53,6 +61,14 @@ def _reject_control_characters(value: str) -> str:
     return value
 
 
+def _reject_booleans_and_decimals(value: object) -> object:
+    if isinstance(value, bool | float):
+        raise PydanticCustomError(
+            "whole_number", "Input should be a whole number or a string of digits"
+        )
+    return value
+
+
 ReviewText = Annotated[
     str,
     StringConstraints(
@@ -61,15 +77,18 @@ ReviewText = Annotated[
     AfterValidator(_reject_control_characters),
     Field(description="Text of the review; line breaks and tabs are allowed."),
 ]
-Score = Annotated[int, Field(ge=MIN_SCORE, le=MAX_SCORE)]
+BookId = Annotated[
+    int,
+    Field(gt=0, description="Gutenberg ID of the book, as returned by /book/search."),
+    BeforeValidator(_reject_booleans_and_decimals),
+]
+Score = Annotated[int, Field(ge=MIN_SCORE, le=MAX_SCORE, strict=True)]
 
 
 class ReviewSubmission(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: Annotated[
-        int, Field(gt=0, description="Gutenberg ID of the book, as returned by /book/search.")
-    ]
+    id: BookId
     review: ReviewText
     score: Score
 

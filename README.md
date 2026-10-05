@@ -35,6 +35,9 @@ go test .
 docker run --rm -e CGO_ENABLED=1 $(docker build -q .) go test -race .
 ```
 
+GitHub Actions runs `gofmt`, `go vet` and the tests with the race detector on every change to this
+exercise.
+
 ## project-be-books
 
 See [project-be-books/README.md](project-be-books/README.md), starting from its
