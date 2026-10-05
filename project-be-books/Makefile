@@ -16,7 +16,11 @@ install: ## Create the virtual environment with every dependency
 
 .PHONY: hooks
 hooks: ## Install the git hooks: checks on commit, tests on push
-	uv run pre-commit install
+	uv run pre-commit install --config .pre-commit-config.yaml
+
+.PHONY: check
+check: ## Run every commit hook on all the files of the project
+	uv run pre-commit run --config .pre-commit-config.yaml --all-files
 
 .PHONY: run
 run: ## Run the API on the host (needs `make migrate` first)

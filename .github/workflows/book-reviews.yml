@@ -36,6 +36,10 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ruff check --output-format=github .
       - run: uv run mypy
+      - name: Pre-commit hooks not run above
+        env:
+          SKIP: ruff-check,ruff-format,mypy,uv-lock
+        run: uv run pre-commit run --config .pre-commit-config.yaml --all-files --show-diff-on-failure
       - name: Prometheus configuration and alert rules
         run: |
           promtool() { docker run --rm --entrypoint promtool -v "$PWD/deploy/observability:/etc/prometheus" -w /etc/prometheus prom/prometheus:v3.15.0 "$@"; }

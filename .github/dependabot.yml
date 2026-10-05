@@ -36,7 +36,7 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: pre-commit
-    directory: /
+    directory: /project-be-books
     schedule:
       interval: weekly
     cooldown:

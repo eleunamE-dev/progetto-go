@@ -727,7 +727,7 @@ services and the integration tests. `make` lists the tasks; these are the comman
 | All the tests | `make test-all` |
 | End-to-end checks on a fresh stack | `make e2e` (`uv run python -m e2e.stack`) |
 | Format, lint, types | `make fmt`, `make lint` (ruff, mypy) |
-| Git hooks | `make hooks` |
+| Git hooks, and every hook on all the files | `make hooks`, `make check` |
 | Export the OpenAPI document | `make openapi` |
 | Stack with Prometheus, Grafana and Jaeger | `make observability` |
 | Check the Prometheus configuration and test the alerts | `make alerts` |
@@ -757,11 +757,21 @@ time the volume is initialised. On a volume created before that script existed, 
 docker compose exec -T db mariadb -uroot -prootpassword < deploy/mariadb/users.sql
 ```
 
-**Git hooks.** The pre-commit hooks (`make hooks`) run ruff, mypy and a check of `uv.lock` on every
-commit, and the tests before every push.
+**Git hooks.** [.pre-commit-config.yaml](.pre-commit-config.yaml) belongs to this project and checks
+only its files. `make hooks` installs it (`uv run pre-commit install --config
+.pre-commit-config.yaml` without `make`), and `make check` runs it on every file.
+- **On every commit:** ruff (lint and format) and mypy; a check that `uv.lock` matches
+  `pyproject.toml`; codespell on code and docs; shellcheck on the scripts; hadolint on the
+  Dockerfile; and the usual hygiene checks (JSON, YAML and TOML syntax, merge conflicts, large
+  files, private keys, trailing whitespace).
+- **Before every push:** the tests, the integration ones included when `TEST_DATABASE_URL` and
+  `TEST_RABBITMQ_URL` are set.
+- **Not here:** the checks that need Docker, such as the alert rule tests, would fail whenever Docker
+  is not running, so they stay in CI.
 
 **CI.** GitHub Actions runs on every change to this folder:
 - ruff, mypy and pip-audit;
+- the other commit hooks, so they hold even for commits made without them;
 - the Prometheus configuration and the alert rule tests, with `promtool`;
 - the whole test suite against the MariaDB and RabbitMQ of [docker-compose.yaml](docker-compose.yaml),
   so updating their images there tests the new versions;
