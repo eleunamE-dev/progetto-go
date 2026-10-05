@@ -13,10 +13,10 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from prometheus_client import REGISTRY
 
-from bookreviews.app import create_app
-from bookreviews.auth import key_digest
+from bookreviews.api.app import create_app
+from bookreviews.api.auth import key_digest
 from bookreviews.config import Settings
-from bookreviews.logs import JsonFormatter
+from bookreviews.observability.logs import JsonFormatter
 
 type LogRecords = Callable[[], list[dict[str, Any]]]
 

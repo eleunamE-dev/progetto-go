@@ -10,12 +10,13 @@ from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from bookreviews.catalog import Book
-from bookreviews.database import SqlReviewRepository, create_sessions
-from bookreviews.queue import RabbitQueue, Topology
-from bookreviews.review_service import Review, ReviewStatus
-from bookreviews.telemetry import trace_engine
-from bookreviews.worker import WorkerOptions
+from bookreviews.adapters.database.connections import create_sessions
+from bookreviews.adapters.database.repository import SqlReviewRepository
+from bookreviews.adapters.queue import RabbitQueue, Topology
+from bookreviews.core.catalog import Book
+from bookreviews.core.reviews import Review, ReviewStatus
+from bookreviews.observability.telemetry import trace_engine
+from bookreviews.worker.runner import WorkerOptions
 from tests.conftest import LogRecords
 from tests.fakes import FakeCatalog
 from tests.integration.test_worker import running_worker, wait_for_status

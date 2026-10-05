@@ -21,12 +21,12 @@ dependencies = [
 ]
 
 [project.scripts]
-bookreviews-api = "bookreviews.main:run_api"
-bookreviews-migrate = "bookreviews.main:run_migrations"
-bookreviews-worker = "bookreviews.main:run_worker"
-bookreviews-openapi = "bookreviews.openapi:main"
-bookreviews-api-key = "bookreviews.auth:main"
-bookreviews-admin = "bookreviews.admin:main"
+bookreviews-api = "bookreviews.cli.main:run_api"
+bookreviews-migrate = "bookreviews.cli.main:run_migrations"
+bookreviews-worker = "bookreviews.cli.main:run_worker"
+bookreviews-openapi = "bookreviews.cli.openapi:main"
+bookreviews-api-key = "bookreviews.cli.api_key:main"
+bookreviews-admin = "bookreviews.cli.admin:main"
 
 [dependency-groups]
 dev = [
@@ -57,14 +57,14 @@ ignore = ["TRY003"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "PLR2004", "PLR0913", "PLR0917", "ARG001", "ARG002"]
-"e2e/**" = ["T201", "S603", "S607", "S608", "PLR2004"]
-"src/bookreviews/reviews.py" = ["PLR0913"]
+"tests/e2e/**" = ["T201", "S603", "S607", "S608", "PLR2004"]
+"src/bookreviews/api/reviews.py" = ["PLR0913"]
 
 [tool.mypy]
 strict = true
 plugins = ["pydantic.mypy"]
 untyped_calls_exclude = ["prometheus_client"]
-files = ["src", "tests", "e2e"]
+files = ["src", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

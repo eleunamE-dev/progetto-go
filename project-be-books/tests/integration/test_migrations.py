@@ -8,7 +8,11 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from bookreviews.database import migrations_config, upgrade_database, wait_for_schema
+from bookreviews.adapters.database.schema import (
+    migrations_config,
+    upgrade_database,
+    wait_for_schema,
+)
 from tests.conftest import LogRecords
 
 pytestmark = pytest.mark.integration

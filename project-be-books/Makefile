@@ -45,7 +45,7 @@ test-all: ## Run every test, using MariaDB and RabbitMQ from Docker Compose
 
 .PHONY: e2e
 e2e: ## Check a fresh Compose stack end to end (stop `make up` first: same ports)
-	uv run python -m e2e.stack
+	uv run python -m tests.e2e.stack
 
 .PHONY: openapi
 openapi: ## Export the OpenAPI document to docs/openapi.json
@@ -83,11 +83,11 @@ manifests: ## Validate the Kubernetes overlays with kubeconform
 
 .PHONY: kind-up
 kind-up: ## Create a local kind cluster and deploy the local overlay on it
-	bash deploy/kubernetes/local/up.sh
+	bash deploy/kubernetes/kind/up.sh
 
 .PHONY: kind-verify
 kind-verify: ## Check the deployment on the local kind cluster
-	uv run python -m e2e.cluster
+	uv run python -m tests.e2e.cluster
 
 .PHONY: kind-down
 kind-down: ## Delete the local kind cluster
