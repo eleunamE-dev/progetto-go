@@ -896,6 +896,15 @@ class Stack:
             )
             return name
 
+        def statements(resources: list[Json]) -> set[tuple[str, str]]:
+            return {
+                (service_of(resource), span["name"])
+                for resource in resources
+                for scope in resource["scopeSpans"]
+                for span in scope.get("spans", [])
+                if any(a["key"] == "db.statement" for a in span.get("attributes", []))
+            }
+
         def joined_trace() -> tuple[str, list[Json]] | None:
             now = datetime.now(UTC)
             found = jaeger.get(
@@ -916,13 +925,13 @@ class Stack:
             }
             for trace_id in trace_ids:
                 resources = jaeger.get(f"/traces/{trace_id}").json()["result"]["resourceSpans"]
-                if services <= {service_of(resource) for resource in resources}:
+                if ("bookreviews-worker", "UPDATE") in statements(resources):
                     return trace_id, resources
             return None
 
         check("Jaeger received traces from the API and the worker", wait_until(reporting, 60, 2))
         joined = wait_until(joined_trace, 60, interval=2)
-        check("a POST /review trace continues in the worker", joined)
+        check("a POST /review trace continues in the worker, which completes the review", joined)
         if joined is None:
             return
         trace_id, resources = joined
@@ -934,15 +943,11 @@ class Stack:
         ]
         kinds = {span.get("kind") for _, span in spans}
         check("the trace has server, producer and consumer spans", {2, 4, 5} <= kinds, kinds)
-        statements = {
-            (service, span["name"])
-            for service, span in spans
-            if any(a["key"] == "db.statement" for a in span.get("attributes", []))
-        }
         check(
             "the trace has the API's INSERT and the worker's UPDATE",
-            {("bookreviews-api", "INSERT"), ("bookreviews-worker", "UPDATE")} <= statements,
-            statements,
+            {("bookreviews-api", "INSERT"), ("bookreviews-worker", "UPDATE")}
+            <= statements(resources),
+            statements(resources),
         )
         check(
             "the worker's log lines carry the same trace ID",
