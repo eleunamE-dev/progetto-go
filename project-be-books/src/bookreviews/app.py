@@ -77,8 +77,15 @@ def create_app(settings: Settings) -> FastAPI:
             CORSMiddleware,
             allow_origins=settings.cors_allow_origins,
             allow_methods=["GET", "POST", "PUT", "DELETE"],
-            allow_headers=["Content-Type", API_KEY_HEADER, REQUEST_ID_HEADER],
-            expose_headers=["Location", "Retry-After", REQUEST_ID_HEADER],
+            allow_headers=[
+                "Content-Type",
+                API_KEY_HEADER,
+                REQUEST_ID_HEADER,
+                "Idempotency-Key",
+                "If-Match",
+                "If-None-Match",
+            ],
+            expose_headers=["Location", "Retry-After", REQUEST_ID_HEADER, "ETag"],
             max_age=600,
         )
     app.add_middleware(RequestContextMiddleware)

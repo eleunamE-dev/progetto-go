@@ -42,6 +42,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from bookreviews.catalog import Book, Person
 from bookreviews.review_service import (
+    Condition,
     IdempotencyKey,
     IdempotencyKeyTakenError,
     Review,
@@ -255,7 +256,7 @@ class SqlReviewRepository:
             found = result.first()
             return None if found is None else (found[0].to_domain(found[1]), found[2])
 
-    async def update(
+    async def update(  # noqa: PLR0913 - write fields and atomic preconditions
         self,
         review_id: uuid.UUID,
         *,
@@ -263,22 +264,36 @@ class SqlReviewRepository:
         score: int,
         updated_at: datetime,
         expected_version: int | None = None,
+        condition: Condition | None = None,
     ) -> Review | None:
         async with self._sessions.begin() as session:
             row = await session.get(ReviewRow, review_id, with_for_update=True)
             if row is None or (expected_version is not None and row.version != expected_version):
                 return None
+            book = await session.get(BookRow, row.book_id, with_for_update=True)
+            if condition is not None and not condition(row.to_domain(book)):
+                return None
             row.content = content
             row.score = score
             row.updated_at = updated_at
             row.version += 1
-            return row.to_domain(await session.get(BookRow, row.book_id))
+            return row.to_domain(book)
 
-    async def delete(self, review_id: uuid.UUID, expected_version: int | None = None) -> bool:
+    async def delete(
+        self,
+        review_id: uuid.UUID,
+        expected_version: int | None = None,
+        *,
+        condition: Condition | None = None,
+    ) -> bool:
         async with self._sessions.begin() as session:
             row = await session.get(ReviewRow, review_id, with_for_update=True)
             if row is None or (expected_version is not None and row.version != expected_version):
                 return False
+            if condition is not None:
+                book = await session.get(BookRow, row.book_id, with_for_update=True)
+                if not condition(row.to_domain(book)):
+                    return False
             await session.delete(row)
             return True
 

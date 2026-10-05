@@ -624,8 +624,9 @@ The design follows from that:
   spares Gutendex the retries of clients that timed out.
 - **Entity tags.** The `ETag` is a hash of the review's JSON representation, book data included,
   so it changes whenever the answer would. A `version` column, bumped by every change, makes the
-  conditional write atomic: the update applies only if the version is still the one that matched
-  `If-Match`. `GET /review/{id}` sends `Cache-Control: no-cache`, so caches may keep a review but
+  conditional write detect concurrent review changes. The repository also rechecks `If-Match`
+  while holding locks on the review and its shared book, so a metadata refresh cannot bypass
+  the precondition. `GET /review/{id}` sends `Cache-Control: no-cache`, so caches may keep a review but
   must revalidate it.
 - **Errors.** Every error is a problem document, including unknown routes and wrong methods.
   Internal details never reach the client.

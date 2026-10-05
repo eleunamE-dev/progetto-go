@@ -191,3 +191,61 @@ async def test_limits_the_requests_in_flight(inner: FakeCatalog, clock: Clock) -
     release.set()
     assert await asyncio.gather(*running) == [PRIDE_AND_PREJUDICE] * OPTIONS.max_concurrency
     assert not catalog.is_open
+
+
+async def test_queued_call_rechecks_the_circuit_before_reaching_the_catalog(clock: Clock) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = []
+
+    class Source(FakeCatalog):
+        async def get_book(self, book_id: int) -> Book:
+            calls.append(book_id)
+            started.set()
+            await release.wait()
+            raise CatalogTimeoutError("unavailable")
+
+    catalog = ResilientCatalog(
+        Source(), ResilienceOptions(max_concurrency=1, failure_threshold=1), clock
+    )
+    first = asyncio.create_task(catalog.get_book(1))
+    await started.wait()
+    queued = asyncio.create_task(catalog.get_book(2))
+    await asyncio.sleep(0)
+    release.set()
+    results = await asyncio.gather(first, queued, return_exceptions=True)
+    assert isinstance(results[0], CatalogTimeoutError)
+    assert isinstance(results[1], CatalogCircuitOpenError)
+    assert calls == [1]
+    assert catalog.is_open
+
+
+@pytest.mark.parametrize("late_error", [False, True])
+async def test_old_inflight_results_do_not_change_an_open_circuit(
+    clock: Clock,
+    late_error: bool,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class Source(FakeCatalog):
+        async def get_book(self, book_id: int) -> Book:
+            if book_id == 1:
+                started.set()
+                await release.wait()
+                if not late_error:
+                    return PRIDE_AND_PREJUDICE
+            raise CatalogTimeoutError("unavailable")
+
+    catalog = ResilientCatalog(Source(), ResilienceOptions(failure_threshold=1), clock)
+    old = asyncio.create_task(catalog.get_book(1))
+    await started.wait()
+    with pytest.raises(CatalogTimeoutError):
+        await catalog.get_book(2)
+    clock.now += 10
+    release.set()
+    await asyncio.gather(old, return_exceptions=True)
+    assert catalog.is_open
+    with pytest.raises(CatalogCircuitOpenError) as error:
+        await catalog.get_book(3)
+    assert error.value.retry_after == 20
