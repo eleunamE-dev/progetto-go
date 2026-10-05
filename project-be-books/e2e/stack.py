@@ -29,7 +29,7 @@ COMPOSE = (
     "--file",
     "e2e/compose.yaml",
 )
-API_URL = "http://localhost:8080"
+API_URL = "http://127.0.0.1:8080"
 NOT_QUEUED = "review saved but not queued, the sweeper will queue it"
 API_KEY = "local-dev-key"
 OTHER_API_KEY = "e2e-other-key"
@@ -643,7 +643,7 @@ class Stack:
             "api",
         )
         try:
-            bad = httpx.Client(base_url="http://localhost:8081", timeout=30)
+            bad = httpx.Client(base_url="http://127.0.0.1:8081", timeout=30)
             check(
                 "a second API instance with an unreachable Gutendex starts",
                 wait_until(lambda: responds(bad, "/readyz"), 60),
@@ -690,7 +690,7 @@ class Stack:
     def parked_messages(self) -> None:
         check = self.checks.check
         rabbit = httpx.Client(
-            base_url="http://localhost:15672/api", auth=("user", "password"), timeout=10
+            base_url="http://127.0.0.1:15672/api", auth=("user", "password"), timeout=10
         )
         r = rabbit.post(
             "/exchanges/%2F/amq.default/publish",
@@ -820,7 +820,7 @@ class Stack:
 
     def metrics(self) -> None:
         check = self.checks.check
-        r = httpx.get("http://localhost:9100/metrics", timeout=10)
+        r = httpx.get("http://127.0.0.1:9100/metrics", timeout=10)
         check(
             "the API serves Prometheus metrics on port 9100, by route template",
             'route="/review/{review_id}"' in r.text
@@ -828,9 +828,9 @@ class Stack:
             r.text[:300],
         )
         check("metrics are not served on the public port", self.status_of("/metrics") == 404)
-        r = httpx.get("http://localhost:9101/healthz", timeout=10)
+        r = httpx.get("http://127.0.0.1:9101/healthz", timeout=10)
         check("the worker answers its health check", r.json() == {"status": "ok"}, r.text)
-        r = httpx.get("http://localhost:9101/metrics", timeout=10)
+        r = httpx.get("http://127.0.0.1:9101/metrics", timeout=10)
         check(
             "the worker counts completed enrichments",
             re.search(r'bookreviews_enrichments_total\{outcome="completed"\} [1-9]', r.text),
@@ -841,7 +841,7 @@ class Stack:
             "bookreviews_pending_reviews " in r.text
             and "bookreviews_oldest_pending_review_age_seconds " in r.text,
         )
-        prometheus = httpx.Client(base_url="http://localhost:9090/api/v1", timeout=10)
+        prometheus = httpx.Client(base_url="http://127.0.0.1:9090/api/v1", timeout=10)
 
         def scraped() -> bool:
             targets = prometheus.get("/targets").json()["data"]["activeTargets"]
@@ -872,7 +872,7 @@ class Stack:
             all(any(metric in query for query in with_data) for metric in DASHBOARD_METRICS),
             [query for query in queries if query not in with_data],
         )
-        r = httpx.get("http://localhost:3000/api/dashboards/uid/bookreviews", timeout=10)
+        r = httpx.get("http://127.0.0.1:3000/api/dashboards/uid/bookreviews", timeout=10)
         check(
             "Grafana provisioned the dashboard",
             r.status_code == 200 and r.json()["dashboard"]["title"] == "Book reviews",
@@ -881,7 +881,7 @@ class Stack:
 
     def traces(self) -> None:
         check = self.checks.check
-        jaeger = httpx.Client(base_url="http://localhost:16686/api/v3", timeout=20)
+        jaeger = httpx.Client(base_url="http://127.0.0.1:16686/api/v3", timeout=20)
         services = {"bookreviews-api", "bookreviews-worker"}
 
         def reporting() -> bool:
