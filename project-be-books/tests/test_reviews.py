@@ -127,13 +127,14 @@ async def test_review_text_may_contain_line_breaks_and_tabs(client: httpx.AsyncC
             "body.id",
             "Input should be a valid integer, unable to parse string as an integer",
         ),
+        ({"id": True}, "body.id", "Input should be a whole number or a string of digits"),
+        ({"id": 1342.0}, "body.id", "Input should be a whole number or a string of digits"),
         ({"score": 0}, "body.score", "Input should be greater than or equal to 1"),
         ({"score": 11}, "body.score", "Input should be less than or equal to 10"),
-        (
-            {"score": 6.5},
-            "body.score",
-            "Input should be a valid integer, got a number with a fractional part",
-        ),
+        ({"score": 6.5}, "body.score", "Input should be a valid integer"),
+        ({"score": 6.0}, "body.score", "Input should be a valid integer"),
+        ({"score": True}, "body.score", "Input should be a valid integer"),
+        ({"score": "6"}, "body.score", "Input should be a valid integer"),
         ({"review": "  ok  "}, "body.review", "String should have at least 3 characters"),
         ({"review": "x" * 5001}, "body.review", "String should have at most 5000 characters"),
         ({"review": "Nice\x07"}, "body.review", "Value error, must not contain control characters"),
@@ -318,6 +319,7 @@ async def test_update_review(client: httpx.AsyncClient, repository: FakeReviewRe
         ({"review": "A classic."}, "body.score"),
         ({"score": 9}, "body.review"),
         ({"review": "A classic.", "score": 9, "id": 84}, "body.id"),
+        ({"review": "A classic.", "score": True}, "body.score"),
     ],
 )
 async def test_update_rejects_invalid_changes(

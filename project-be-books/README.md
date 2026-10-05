@@ -26,7 +26,8 @@ The [assignment](ASSIGNMENT.md) asks for five endpoints, data enriched asynchron
 public API, an easy way to run the service, and tests. With Docker, checking it takes a few
 minutes:
 
-1. **Run it.** `docker compose up --build --wait` starts everything, see [Quick start](#quick-start).
+1. **Run it.** From this folder, `docker compose up --build --wait` starts everything, see
+   [Quick start](#quick-start).
 2. **Try it.** [A tour of the API](#a-tour-of-the-api) searches a book, reviews it, waits for the
    enrichment, then changes and deletes the review, with `curl`. Writes need the header
    `X-API-Key: local-dev-key`.
@@ -60,7 +61,7 @@ endpoint to operations.
 
 ## Quick start
 
-You only need Docker with Compose.
+You only need Docker with Compose. From this folder, `project-be-books`:
 
 ```bash
 docker compose up --build --wait
@@ -78,13 +79,6 @@ the enrichment worker. Then:
 
 The ports are published on 127.0.0.1 only, so the development passwords stay on your machine.
 `docker compose down` stops everything; add `-v` to delete the database volume too.
-
-The database accounts are created by [deploy/mariadb/users.sql](deploy/mariadb/users.sql) the first
-time the volume is initialised. On a volume created before that script existed, apply it once:
-
-```bash
-docker compose exec -T db mariadb -uroot -prootpassword < deploy/mariadb/users.sql
-```
 
 ## A tour of the API
 
@@ -755,6 +749,13 @@ services and the integration tests. `make` lists the tasks; these are the comman
 
 **Migrations.** With the database running, `uv run alembic revision --autogenerate -m "what changes"`
 writes a new migration from the models; review it before committing.
+
+**Database accounts.** [deploy/mariadb/users.sql](deploy/mariadb/users.sql) creates them the first
+time the volume is initialised. On a volume created before that script existed, apply it once:
+
+```bash
+docker compose exec -T db mariadb -uroot -prootpassword < deploy/mariadb/users.sql
+```
 
 **Git hooks.** The pre-commit hooks (`make hooks`) run ruff, mypy and a check of `uv.lock` on every
 commit, and the tests before every push.

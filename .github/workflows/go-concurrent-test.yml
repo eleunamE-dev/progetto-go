@@ -1,0 +1,44 @@
+name: go-concurrent-test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "task-golang-concurrent-test/**"
+      - ".github/workflows/go-concurrent-test.yml"
+  pull_request:
+    paths:
+      - "task-golang-concurrent-test/**"
+      - ".github/workflows/go-concurrent-test.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: task-golang-concurrent-test
+
+jobs:
+  test:
+    name: Go tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: task-golang-concurrent-test/go.mod
+          cache: false
+      - name: Formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      - name: Tests with the race detector
+        run: go test -race -count=1 ./...
