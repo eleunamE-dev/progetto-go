@@ -5,6 +5,7 @@ from datetime import datetime
 
 from bookreviews.catalog import Book, BookNotFoundError, SearchResult
 from bookreviews.review_service import (
+    Condition,
     IdempotencyKey,
     IdempotencyKeyTakenError,
     QueueUnavailableError,
@@ -69,9 +70,12 @@ class FakeReviewRepository:
         score: int,
         updated_at: datetime,
         expected_version: int | None = None,
+        condition: Condition | None = None,
     ) -> Review | None:
         review = self.reviews.get(review_id)
         if review is None or (expected_version is not None and review.version != expected_version):
+            return None
+        if condition is not None and not condition(review):
             return None
         updated = replace(
             review,
@@ -83,9 +87,17 @@ class FakeReviewRepository:
         self.reviews[review_id] = updated
         return updated
 
-    async def delete(self, review_id: uuid.UUID, expected_version: int | None = None) -> bool:
+    async def delete(
+        self,
+        review_id: uuid.UUID,
+        expected_version: int | None = None,
+        *,
+        condition: Condition | None = None,
+    ) -> bool:
         review = self.reviews.get(review_id)
         if review is None or (expected_version is not None and review.version != expected_version):
+            return False
+        if condition is not None and not condition(review):
             return False
         del self.reviews[review_id]
         self.queued_at.pop(review_id, None)

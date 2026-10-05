@@ -83,7 +83,7 @@ class ReviewRepository(Protocol):
 
     async def find_by_idempotency_key(self, owner: str, key: str) -> tuple[Review, str] | None: ...
 
-    async def update(
+    async def update(  # noqa: PLR0913 - write fields and atomic preconditions
         self,
         review_id: uuid.UUID,
         *,
@@ -91,9 +91,16 @@ class ReviewRepository(Protocol):
         score: int,
         updated_at: datetime,
         expected_version: int | None = None,
+        condition: Condition | None = None,
     ) -> Review | None: ...
 
-    async def delete(self, review_id: uuid.UUID, expected_version: int | None = None) -> bool: ...
+    async def delete(
+        self,
+        review_id: uuid.UUID,
+        expected_version: int | None = None,
+        *,
+        condition: Condition | None = None,
+    ) -> bool: ...
 
 
 class ReviewQueue(Protocol):
@@ -165,6 +172,7 @@ class ReviewService:
             score=score,
             updated_at=self._clock(),
             expected_version=expected,
+            condition=condition,
         )
         if review is None:
             raise await self._missed_write(review_id, expected)
@@ -174,7 +182,9 @@ class ReviewService:
         self, review_id: uuid.UUID, client: str, *, condition: Condition | None = None
     ) -> None:
         expected = self._expected_version(await self._owned(review_id, client), condition)
-        if not await self._repository.delete(review_id, expected_version=expected):
+        if not await self._repository.delete(
+            review_id, expected_version=expected, condition=condition
+        ):
             raise await self._missed_write(review_id, expected)
 
     async def _create(

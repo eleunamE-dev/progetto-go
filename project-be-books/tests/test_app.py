@@ -127,3 +127,15 @@ async def test_waiting_for_an_unreachable_database_keeps_trying(json_logs: LogRe
             await wait_for_schema("mysql+aiomysql://user:password@127.0.0.1:9/bookreviews", 0.1)
 
     assert "database not reachable yet" in [r["msg"] for r in json_logs()]
+
+
+@pytest.mark.parametrize("header", ["Idempotency-Key", "If-Match", "If-None-Match"])
+async def test_cross_origin_conditional_and_idempotent_requests(header: str) -> None:
+    app = create_app(Settings(cors_allow_origins=["https://reviews.example.com"]))
+    async with client_for(app) as client:
+        preflight = await client.options(
+            "/review", headers=PREFLIGHT | {"Access-Control-Request-Headers": header}
+        )
+        response = await client.get("/healthz", headers={"Origin": PREFLIGHT["Origin"]})
+    assert preflight.status_code == 200
+    assert "etag" in response.headers["access-control-expose-headers"].lower()

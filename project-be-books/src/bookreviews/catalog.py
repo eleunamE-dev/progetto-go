@@ -141,6 +141,7 @@ class ResilientCatalog:
         self._failures = 0
         self._opened_at: float | None = None
         self._probing = False
+        self._generation = 0
 
     @property
     def is_open(self) -> bool:
@@ -154,20 +155,27 @@ class ResilientCatalog:
 
     async def _call[T](self, operation: Callable[[], Awaitable[T]]) -> T:
         probe = self._admit()
+        generation = self._generation
         try:
             async with self._slot():
-                result = await operation()
-        except CatalogBusyError:
-            raise
-        except CatalogUnavailableError:
-            self._record_failure()
-            raise
-        except CatalogError:
-            self._record_success()
-            raise
-        else:
-            self._record_success()
-            return result
+                # A queued call must respect a circuit opened while it waited.
+                if generation != self._generation:
+                    probe = self._admit()
+                    generation = self._generation
+                try:
+                    result = await operation()
+                except CatalogUnavailableError:
+                    if generation == self._generation:
+                        self._record_failure()
+                    raise
+                except CatalogError:
+                    if generation == self._generation:
+                        self._record_success()
+                    raise
+                else:
+                    if generation == self._generation:
+                        self._record_success()
+                    return result
         finally:
             if probe:
                 self._probing = False
@@ -198,6 +206,7 @@ class ResilientCatalog:
     def _record_failure(self) -> None:
         self._failures += 1
         if self._opened_at is not None or self._failures >= self._options.failure_threshold:
+            self._generation += 1
             self._opened_at = self._clock()
             metrics.catalog_circuit_open.set(1)
             logger.warning(
