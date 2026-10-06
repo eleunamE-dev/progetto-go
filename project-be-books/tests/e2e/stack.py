@@ -853,9 +853,16 @@ class Stack:
         check("Prometheus scrapes the API and the worker", wait_until(scraped, 90, interval=2))
         groups = prometheus.get("/rules").json()["data"]["groups"]
         check("Prometheus loaded the 8 alert rules", sum(len(g["rules"]) for g in groups) == 8)
-        alerts = prometheus.get("/alerts").json()["data"]["alerts"]
-        firing = [a["labels"]["alertname"] for a in alerts if a["state"] == "firing"]
-        check("no alert is firing on the healthy stack", not firing, firing)
+
+        def firing() -> list[str]:
+            alerts = prometheus.get("/alerts").json()["data"]["alerts"]
+            return sorted(a["labels"]["alertname"] for a in alerts if a["state"] == "firing")
+
+        check(
+            "the message parked earlier fires BookReviewsParkedMessages, and no other alert fires",
+            wait_until(lambda: firing() == ["BookReviewsParkedMessages"], 60, interval=2),
+            firing(),
+        )
         dashboard = json.loads(
             (PROJECT / "deploy/observability/grafana/bookreviews.json").read_text(encoding="utf-8")
         )
