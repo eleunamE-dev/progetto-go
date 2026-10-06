@@ -14,7 +14,7 @@ from bookreviews.core.enrichment import Outcome, ReviewEnricher
 from bookreviews.core.reviews import IdempotencyKey, Review, ReviewStatus
 from bookreviews.worker.messages import MessageHandler
 from bookreviews.worker.sweeper import Sweeper, SweepPolicy
-from tests.conftest import LogRecords
+from tests.conftest import LogRecords, sample
 from tests.fakes import FakeCatalog, FakeMessage, FakeQueue, FakeReviewRepository
 
 NOW = datetime(2026, 10, 3, 12, 0, tzinfo=UTC)
@@ -239,11 +239,13 @@ async def test_handler_retries_parking_later_when_rabbitmq_is_down(
 ) -> None:
     parking.accepted = 0
     message = FakeMessage(b"not json")
+    retried = sample("bookreviews_enrichments_total", outcome="retried")
 
     await handler(message)
 
     assert message.rejected
     assert not message.acked
+    assert sample("bookreviews_enrichments_total", outcome="retried") == retried + 1
 
 
 async def test_drain_waits_for_messages_in_flight(
@@ -387,6 +389,7 @@ async def test_sweep_gives_up_on_reviews_pending_for_too_long(
     await sweeper.sweep()
 
     assert repository.reviews[abandoned.id].status is ReviewStatus.FAILED
+    assert repository.reviews[abandoned.id].updated_at == NOW
     assert repository.reviews[recent.id].status is ReviewStatus.PENDING
     assert queue.enqueued == [recent.id]
     [record] = [r for r in json_logs() if r["msg"] == "gave up on reviews pending for too long"]
@@ -461,3 +464,104 @@ async def test_a_retry_meeting_an_unavailable_catalog_changes_nothing(
         await enricher.retry(review.id)
 
     assert repository.reviews[review.id] == review
+
+
+async def test_enriched_reviews_record_when_they_changed(
+    repository: FakeReviewRepository, catalog: FakeCatalog
+) -> None:
+    later = NOW + timedelta(minutes=5)
+    enricher = ReviewEnricher(repository, catalog, clock=lambda: later)
+    completed, failed, retried = (
+        new_review(),
+        new_review(book_id=999),
+        new_review(status=ReviewStatus.FAILED),
+    )
+    for review in (completed, failed, retried):
+        await repository.add(review)
+
+    assert await enricher.enrich(completed.id) is Outcome.COMPLETED
+    assert await enricher.enrich(failed.id) is Outcome.FAILED
+    assert await enricher.retry(retried.id) is Outcome.COMPLETED
+
+    for review in (completed, failed, retried):
+        assert repository.reviews[review.id].updated_at == later
+
+
+class DeletedMeanwhile(FakeReviewRepository):
+    async def complete(
+        self,
+        review_id: uuid.UUID,
+        book: Book,
+        at: datetime,
+        expected_status: ReviewStatus = ReviewStatus.PENDING,
+    ) -> bool:
+        await self.delete(review_id)
+        return await super().complete(review_id, book, at, expected_status)
+
+    async def fail(self, review_id: uuid.UUID, at: datetime) -> bool:
+        await self.delete(review_id)
+        return await super().fail(review_id, at)
+
+
+async def test_reviews_deleted_while_the_book_was_fetched_are_skipped(
+    catalog: FakeCatalog,
+) -> None:
+    repository = DeletedMeanwhile()
+    enricher = ReviewEnricher(repository, catalog, clock=lambda: NOW)
+    pending, missing_book, failed = (
+        new_review(),
+        new_review(book_id=999),
+        new_review(status=ReviewStatus.FAILED),
+    )
+    for review in (pending, missing_book, failed):
+        await repository.add(review)
+
+    assert await enricher.enrich(pending.id) is Outcome.SKIPPED
+    assert await enricher.enrich(missing_book.id) is Outcome.SKIPPED
+    assert await enricher.retry(failed.id) is Outcome.SKIPPED
+
+
+async def test_drain_waits_for_every_message_in_flight(repository: FakeReviewRepository) -> None:
+    releases = {1342: asyncio.Event(), 98: asyncio.Event()}
+
+    class SlowCatalog(FakeCatalog):
+        async def get_book(self, book_id: int) -> Book:
+            await releases[book_id].wait()
+            return await super().get_book(book_id)
+
+    books = {1342: PRIDE_AND_PREJUDICE, 98: Book(id=98, title="A Tale of Two Cities")}
+    handler = MessageHandler(
+        ReviewEnricher(repository, SlowCatalog(books=books), clock=lambda: NOW),
+        TOPOLOGY,
+        max_attempts=3,
+        parking=FakeQueue(),
+    )
+    await asyncio.wait_for(handler.drain(grace_period=60), timeout=1)
+    first, second = new_review(), new_review(book_id=98)
+    for review in (first, second):
+        await repository.add(review)
+    messages = [message_for(first.id), message_for(second.id)]
+    tasks = [asyncio.create_task(handler(message)) for message in messages]
+    await asyncio.sleep(0)
+
+    releases[1342].set()
+    await asyncio.wait_for(tasks[0], timeout=1)
+    draining = asyncio.create_task(handler.drain(grace_period=60))
+    await asyncio.sleep(0.05)
+    assert not draining.done()
+
+    releases[98].set()
+    await asyncio.wait_for(draining, timeout=1)
+    assert all(message.acked for message in messages)
+    await tasks[1]
+
+
+async def test_a_sweep_queues_at_most_100_reviews(repository: FakeReviewRepository) -> None:
+    for minute in range(101):
+        await repository.add(new_review(created_at=NOW - timedelta(hours=2, minutes=minute)))
+    queue = FakeQueue()
+    sweeper = Sweeper(repository, queue, POLICY, clock=lambda: NOW)
+
+    assert await sweeper.sweep() == 100
+    assert await sweeper.sweep() == 1
+    assert len(set(queue.enqueued)) == 101

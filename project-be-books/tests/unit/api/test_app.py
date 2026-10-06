@@ -61,6 +61,21 @@ async def client_for(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
         yield client
 
 
+async def test_the_docs_are_served(client: httpx.AsyncClient) -> None:
+    pages = {
+        "/docs": "swagger-ui",
+        "/docs/oauth2-redirect": "oauth2",
+        "/redoc": "redoc",
+        "/openapi.json": '"openapi"',
+    }
+
+    for path, marker in pages.items():
+        response = await client.get(path)
+
+        assert response.status_code == 200, path
+        assert marker in response.text, path
+
+
 async def test_the_docs_can_be_turned_off() -> None:
     async with client_for(create_app(Settings(api_docs_enabled=False))) as client:
         for path in ("/docs", "/redoc", "/openapi.json"):
@@ -92,6 +107,7 @@ async def test_cross_origin_requests_from_the_allowed_origins() -> None:
     assert preflight.status_code == 200
     assert preflight.headers["access-control-allow-origin"] == "https://reviews.example.com"
     assert "x-api-key" in preflight.headers["access-control-allow-headers"].lower()
+    assert preflight.headers["access-control-max-age"] == "600"
     assert stranger.status_code == 400
     assert "access-control-allow-origin" not in stranger.headers
     assert simple.headers["access-control-allow-origin"] == "https://reviews.example.com"

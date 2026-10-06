@@ -1,5 +1,6 @@
 import re
 from collections.abc import AsyncIterator, Callable
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -7,12 +8,13 @@ from fastapi import FastAPI, Response
 from fastapi.responses import StreamingResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from bookreviews.api import middleware as http_middleware
 from bookreviews.api.middleware import (
     BodySizeLimitMiddleware,
     RequestContextMiddleware,
     SecurityHeadersMiddleware,
 )
-from tests.conftest import LogRecords
+from tests.conftest import LogRecords, sample
 
 
 async def test_generates_a_request_id(client: httpx.AsyncClient) -> None:
@@ -106,19 +108,23 @@ async def test_errors_after_the_response_started_are_reraised(
 )
 async def test_passes_other_scopes_through(middleware: Callable[[ASGIApp], ASGIApp]) -> None:
     seen: list[str] = []
+    sent: list[Message] = []
 
-    async def inner(scope: Scope, _receive: Receive, _send: Send) -> None:
+    async def inner(scope: Scope, receive: Receive, send: Send) -> None:
         seen.append(scope["type"])
+        seen.append((await receive())["type"])
+        await send({"type": "lifespan.startup.complete"})
 
     async def receive() -> Message:
         return {"type": "lifespan.startup"}
 
     async def send(message: Message) -> None:
-        pass
+        sent.append(message)
 
     await middleware(inner)({"type": "lifespan"}, receive, send)
 
-    assert seen == ["lifespan"]
+    assert seen == ["lifespan", "lifespan.startup"]
+    assert sent == [{"type": "lifespan.startup.complete"}]
 
 
 async def test_security_headers(client: httpx.AsyncClient) -> None:
@@ -182,6 +188,32 @@ async def test_a_declared_length_over_the_limit_is_refused(
     assert record["status"] == 413
 
 
+async def test_a_declared_length_over_the_limit_is_refused_before_reading_the_body() -> None:
+    reached: list[str] = []
+    sent: list[Message] = []
+
+    async def inner(_scope: Scope, _receive: Receive, _send: Send) -> None:
+        reached.append("application")
+
+    async def receive() -> Message:
+        reached.append("body")
+        return {"type": "http.request", "body": b"x" * 11, "more_body": False}
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/review",
+        "headers": [(b"content-length", b"11")],
+    }
+    await BodySizeLimitMiddleware(inner, max_size=10)(scope, receive, send)
+
+    assert reached == []
+    assert sent[0]["status"] == 413
+
+
 async def test_a_streamed_body_over_the_limit_is_refused(client: httpx.AsyncClient) -> None:
     async def chunks() -> AsyncIterator[bytes]:
         for _ in range(3):
@@ -194,3 +226,20 @@ async def test_a_streamed_body_over_the_limit_is_refused(client: httpx.AsyncClie
     assert "content-length" not in response.request.headers
     assert response.status_code == 413
     assert response.json()["detail"] == "the request body must not exceed 65536 bytes"
+
+
+async def test_each_request_is_timed(
+    client: httpx.AsyncClient, json_logs: LogRecords, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    readings = [10.0, 10.25]
+    clock = SimpleNamespace(perf_counter=lambda: readings.pop(0))
+    monkeypatch.setattr(http_middleware, "time", clock)
+    timed = sample("bookreviews_http_request_duration_seconds_sum", method="GET", route="/healthz")
+
+    await client.get("/healthz")
+
+    assert sample(
+        "bookreviews_http_request_duration_seconds_sum", method="GET", route="/healthz"
+    ) == pytest.approx(timed + 0.25)
+    [record] = [r for r in json_logs() if r["msg"] == "http request"]
+    assert record["duration_ms"] == 250.0

@@ -1,4 +1,5 @@
 import argparse
+import sys
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
@@ -76,27 +77,70 @@ def test_times_without_a_zone_are_utc(value: str, expected: datetime) -> None:
     assert admin.moment(value) == expected
 
 
-def test_the_command_line(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def parsed(monkeypatch: pytest.MonkeyPatch, *argv: str) -> argparse.Namespace:
     calls: list[argparse.Namespace] = []
 
     async def retry_failed(settings: Settings, arguments: argparse.Namespace) -> str:
         calls.append(arguments)
-        return "2 failed reviews would be retried"
+        return ""
 
     monkeypatch.setattr(admin, "retry_failed", retry_failed)
     monkeypatch.setattr(admin, "configure_logging", lambda *_: None)
-
-    admin.main(["retry-failed", "--since", "2026-10-01", "--limit", "50", "--dry-run"])
-
+    admin.main(["retry-failed", *argv])
     [arguments] = calls
+    return arguments
+
+
+def test_the_command_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[tuple[Settings, argparse.Namespace]] = []
+    logging: list[tuple[object, ...]] = []
+
+    async def retry_failed(settings: Settings, arguments: argparse.Namespace) -> str:
+        calls.append((settings, arguments))
+        return "2 failed reviews would be retried"
+
+    monkeypatch.setattr(admin, "retry_failed", retry_failed)
+    monkeypatch.setattr(admin, "configure_logging", lambda *args: logging.append(args))
+    monkeypatch.setenv("LOG_LEVEL", "debug")
+
+    since, until = ["--since", "2026-10-01"], ["--until", "2026-10-02"]
+    admin.main(["retry-failed", *since, *until, "--limit", "50", "--dry-run"])
+
+    [(settings, arguments)] = calls
+    assert settings.log_level == "DEBUG"
+    assert logging == [("DEBUG", sys.stderr)]
     assert arguments.since == datetime(2026, 10, 1, tzinfo=UTC)
-    assert arguments.until is None
+    assert arguments.until == datetime(2026, 10, 2, tzinfo=UTC)
     assert arguments.limit == 50
     assert arguments.concurrency == admin.RETRY_CONCURRENCY
     assert arguments.dry_run
     assert capsys.readouterr().out == "2 failed reviews would be retried\n"
+
+
+def test_the_defaults_of_retry_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    arguments = parsed(monkeypatch)
+
+    assert (arguments.since, arguments.until) == (None, None)
+    assert arguments.limit == 1000
+    assert arguments.concurrency == admin.RETRY_CONCURRENCY
+    assert not arguments.dry_run
+
+
+def test_counts_of_one_are_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    arguments = parsed(monkeypatch, "--limit", "1", "--concurrency", "1")
+
+    assert (arguments.limit, arguments.concurrency) == (1, 1)
+
+
+def test_the_summary_counts_every_review() -> None:
+    ids = [uuid.uuid7() for _ in range(5)]
+    report = admin.RetryReport(
+        completed=ids[:1], still_failed=ids[1:2], unavailable=ids[2:4], skipped=ids[4:]
+    )
+
+    assert report.summary().startswith("5 failed reviews retried: 1 completed")
 
 
 def test_a_command_is_required(capsys: pytest.CaptureFixture[str]) -> None:

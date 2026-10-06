@@ -111,10 +111,10 @@ class FakeReviewRepository:
         at: datetime,
         expected_status: ReviewStatus = ReviewStatus.PENDING,
     ) -> bool:
-        return self._finish(review_id, ReviewStatus.COMPLETED, book, expected_status)
+        return self._finish(review_id, ReviewStatus.COMPLETED, book, at, expected_status)
 
     async def fail(self, review_id: uuid.UUID, at: datetime) -> bool:
-        return self._finish(review_id, ReviewStatus.FAILED, None)
+        return self._finish(review_id, ReviewStatus.FAILED, None, at)
 
     async def stale_pending(self, *, queued_before: datetime, limit: int) -> list[uuid.UUID]:
         stale = sorted(
@@ -135,7 +135,7 @@ class FakeReviewRepository:
             if review.status is ReviewStatus.PENDING and review.created_at < created_before
         ]
         for review_id in expired:
-            self._finish(review_id, ReviewStatus.FAILED, None)
+            self._finish(review_id, ReviewStatus.FAILED, None, at)
         return len(expired)
 
     async def forget_idempotency_keys(self, *, created_before: datetime) -> int:
@@ -153,13 +153,14 @@ class FakeReviewRepository:
         review_id: uuid.UUID,
         status: ReviewStatus,
         book: Book | None,
+        at: datetime,
         expected_status: ReviewStatus = ReviewStatus.PENDING,
     ) -> bool:
         review = self.reviews.get(review_id)
         if review is None or review.status is not expected_status:
             return False
         self.reviews[review_id] = replace(
-            review, status=status, book=book, version=review.version + 1
+            review, status=status, book=book, updated_at=at, version=review.version + 1
         )
         return True
 

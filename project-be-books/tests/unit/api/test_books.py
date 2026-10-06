@@ -166,6 +166,7 @@ async def test_catalog_failures(
     assert response.status_code == status
     assert response.headers["content-type"] == "application/problem+json"
     assert response.json()["detail"] == detail
+    assert response.json()["instance"] == "/book/search"
     assert "Gutendex" not in response.text
     [record] = [r for r in json_logs() if r["msg"] == "book catalog request failed"]
     assert record["level"] == "ERROR"
@@ -194,6 +195,7 @@ async def test_a_suspended_or_saturated_catalog_asks_to_retry_later(
     assert response.status_code == 503
     assert response.headers["retry-after"] == retry_after
     assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["instance"] == "/book/search"
     assert response.json()["detail"] == (
         "the book catalog is temporarily unavailable, try again later"
     )

@@ -192,6 +192,19 @@ async def test_the_sweeper_queues_forgotten_reviews(
         await wait_for_status(repository, forgotten.id, ReviewStatus.COMPLETED)
 
 
+async def test_the_sweeper_keeps_sweeping_with_the_configured_delay(
+    rabbitmq_url: str,
+    repository: SqlReviewRepository,
+    options: WorkerOptions,
+) -> None:
+    catalog = FakeCatalog(books={1342: PRIDE_AND_PREJUDICE})
+
+    async with running_worker(rabbitmq_url, repository, catalog, options):
+        await asyncio.sleep(0.3)
+        forgotten = await pending_review(repository, datetime.now(UTC) - timedelta(minutes=2))
+        await wait_for_status(repository, forgotten.id, ReviewStatus.COMPLETED)
+
+
 async def test_the_sweeper_gives_up_on_reviews_pending_for_too_long(
     rabbitmq_url: str,
     repository: SqlReviewRepository,
@@ -232,6 +245,7 @@ async def test_malformed_messages_are_parked(
 
     assert message.body == b"not json"
     assert message.headers == {"x-parked-reason": "not an enrichment request: b'not json'"}
+    assert message.delivery_mode == aio_pika.DeliveryMode.PERSISTENT
     [record] = [r for r in json_logs() if r["msg"] == "malformed message parked"]
     assert record["level"] == "ERROR"
     assert record["queue"] == topology.parking_queue

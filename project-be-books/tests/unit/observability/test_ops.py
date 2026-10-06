@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 
+from bookreviews.observability import ops
 from bookreviews.observability.ops import OpsServer
 
 
@@ -55,6 +56,16 @@ async def test_survives_garbage(server: OpsServer) -> None:
     async with httpx.AsyncClient() as client:
         response = await client.get(f"http://127.0.0.1:{server.port}/healthz")
     assert response.status_code == 200
+
+
+async def test_disconnects_clients_that_send_nothing(
+    server: OpsServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ops, "READ_TIMEOUT", 0.1)
+    reader, writer = await asyncio.open_connection("127.0.0.1", server.port)
+
+    assert await asyncio.wait_for(reader.read(), timeout=2) == b""
+    writer.close()
 
 
 async def test_close_is_idempotent() -> None:

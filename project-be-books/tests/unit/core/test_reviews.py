@@ -6,6 +6,7 @@ import pytest
 
 from bookreviews.core.catalog import Book, BookNotFoundError, CatalogUnavailableError
 from bookreviews.core.reviews import (
+    Condition,
     IdempotencyKey,
     IdempotencyKeyReusedError,
     IdempotencyKeyTakenError,
@@ -200,11 +201,12 @@ async def test_a_review_deleted_during_a_change_is_not_found(
 
     for condition in (None, lambda _review: True):
         first = await service.submit(1342, "A classic.", 9, OWNER)
-        with pytest.raises(ReviewNotFoundError):
+        with pytest.raises(ReviewNotFoundError) as update_error:
             await service.update(first.id, "Changed.", 1, OWNER, condition=condition)
         second = await service.submit(1342, "A classic.", 9, OWNER)
-        with pytest.raises(ReviewNotFoundError):
+        with pytest.raises(ReviewNotFoundError) as delete_error:
             await service.delete(second.id, OWNER, condition=condition)
+        assert (update_error.value.review_id, delete_error.value.review_id) == (first.id, second.id)
 
 
 async def test_a_repeated_submission_returns_the_first_review(
@@ -357,3 +359,61 @@ async def test_a_change_made_after_the_condition_was_checked_is_kept(
         await service.delete(review.id, OWNER, condition=changed_meanwhile)
 
     assert repository.reviews[review.id].content == "Changed by another request."
+
+
+class BookRefreshedMeanwhile(FakeReviewRepository):
+    async def update(
+        self,
+        review_id: uuid.UUID,
+        *,
+        content: str,
+        score: int,
+        updated_at: datetime,
+        expected_version: int | None = None,
+        condition: Condition | None = None,
+    ) -> Review | None:
+        self._refresh_book(review_id)
+        return await super().update(
+            review_id,
+            content=content,
+            score=score,
+            updated_at=updated_at,
+            expected_version=expected_version,
+            condition=condition,
+        )
+
+    async def delete(
+        self,
+        review_id: uuid.UUID,
+        expected_version: int | None = None,
+        *,
+        condition: Condition | None = None,
+    ) -> bool:
+        self._refresh_book(review_id)
+        return await super().delete(review_id, expected_version, condition=condition)
+
+    def _refresh_book(self, review_id: uuid.UUID) -> None:
+        refreshed = Book(id=1342, title="Pride and Prejudice", download_count=1)
+        self.reviews[review_id] = replace(self.reviews[review_id], book=refreshed)
+
+
+async def test_a_book_refreshed_after_the_check_fails_the_condition(
+    catalog: FakeCatalog, queue: FakeQueue, clock: Clock
+) -> None:
+    repository = BookRefreshedMeanwhile()
+    service = ReviewService(repository, catalog, queue, clock)
+    edited = await service.submit(1342, "A classic.", 9, OWNER)
+    deleted = await service.submit(1342, "A classic.", 9, OWNER)
+    seen = {review_id: repository.reviews[review_id] for review_id in (edited.id, deleted.id)}
+
+    def unchanged(current: Review) -> bool:
+        return current == seen[current.id]
+
+    with pytest.raises(PreconditionFailedError) as update_error:
+        await service.update(edited.id, "Mine.", 1, OWNER, condition=unchanged)
+    with pytest.raises(PreconditionFailedError) as delete_error:
+        await service.delete(deleted.id, OWNER, condition=unchanged)
+
+    assert (update_error.value.review_id, delete_error.value.review_id) == (edited.id, deleted.id)
+    assert repository.reviews[edited.id].content == "A classic."
+    assert repository.reviews[deleted.id].version == seen[deleted.id].version

@@ -1,7 +1,9 @@
 import json
 import logging
 import sys
+import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime
 
 import pytest
 
@@ -26,6 +28,16 @@ def test_formats_records_as_json_with_extra_fields() -> None:
     assert entry["time"].endswith("+00:00")
     assert "args" not in entry
     assert "request_id" not in entry
+
+
+def test_values_json_cannot_hold_are_written_as_text() -> None:
+    review_id = uuid.UUID("0190c1a0-0000-7000-8000-000000000000")
+    record = _record(review_id=review_id, at=datetime(2026, 10, 6, 12, 0, tzinfo=UTC))
+
+    entry = json.loads(JsonFormatter().format(record))
+
+    assert entry["review_id"] == str(review_id)
+    assert entry["at"] == "2026-10-06 12:00:00+00:00"
 
 
 def test_drops_uvicorn_color_messages() -> None:

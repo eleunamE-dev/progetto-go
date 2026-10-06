@@ -4,6 +4,7 @@ import sys
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -30,7 +31,9 @@ from bookreviews.core.reviews import (
     ReviewService,
     ReviewStatus,
 )
+from bookreviews.observability import catalog as catalog_metrics
 from bookreviews.observability.catalog import MeasuredCatalog
+from bookreviews.worker import messages
 from bookreviews.worker.messages import MessageHandler
 from bookreviews.worker.sweeper import Sweeper, SweepPolicy
 from tests.conftest import sample
@@ -141,13 +144,36 @@ async def test_catalog_calls_are_counted_and_timed(error: Exception | None, outc
 
 
 async def test_searches_are_measured_too() -> None:
+    inner = FakeCatalog()
     before = sample("bookreviews_catalog_requests_total", operation="search", outcome="ok")
 
-    await MeasuredCatalog(FakeCatalog()).search("austen")
+    assert await MeasuredCatalog(inner).search("austen") == inner.result
+    await MeasuredCatalog(inner).search("austen", page=2)
 
+    assert inner.searches == [("austen", 1), ("austen", 2)]
     assert sample("bookreviews_catalog_requests_total", operation="search", outcome="ok") == (
-        before + 1
+        before + 2
     )
+
+
+async def test_catalog_calls_and_enrichments_are_timed(monkeypatch: pytest.MonkeyPatch) -> None:
+    readings = [10.0, 10.25, 20.0, 20.5]
+    clock = SimpleNamespace(perf_counter=lambda: readings.pop(0))
+    monkeypatch.setattr(catalog_metrics, "time", clock)
+    monkeypatch.setattr(messages, "time", clock)
+    lookups = sample("bookreviews_catalog_request_duration_seconds_sum", operation="get_book")
+    handled = sample("bookreviews_enrichment_duration_seconds_sum")
+    handler = MessageHandler(
+        ReviewEnricher(FakeReviewRepository(), FakeCatalog()), Topology(), 2, FakeQueue()
+    )
+
+    await MeasuredCatalog(FakeCatalog(books={1342: BOOK})).get_book(1342)
+    await handler(FakeMessage(b"not json"))
+
+    assert sample(
+        "bookreviews_catalog_request_duration_seconds_sum", operation="get_book"
+    ) == pytest.approx(lookups + 0.25)
+    assert sample("bookreviews_enrichment_duration_seconds_sum") == pytest.approx(handled + 0.5)
 
 
 async def test_cache_hits_and_misses_are_counted() -> None:
