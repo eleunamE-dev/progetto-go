@@ -6,7 +6,11 @@ from collections.abc import Sequence
 
 import uvicorn
 
-from bookreviews.adapters.database.schema import upgrade_database, wait_for_schema
+from bookreviews.adapters.database.schema import (
+    upgrade_database,
+    wait_for_database,
+    wait_for_schema,
+)
 from bookreviews.api.app import create_app
 from bookreviews.config import Settings
 from bookreviews.observability.logs import configure_logging
@@ -43,7 +47,7 @@ def run_migrations(argv: Sequence[str] | None = None) -> None:
         "--timeout",
         type=float,
         default=600,
-        help="seconds to wait for the schema, or for another migration to finish",
+        help="seconds to wait for the database, then for the schema or another migration",
     )
     arguments = parser.parse_args(argv)
     settings = Settings()
@@ -52,7 +56,16 @@ def run_migrations(argv: Sequence[str] | None = None) -> None:
     if arguments.wait:
         asyncio.run(_wait_for_schema(url, arguments.timeout))
     else:
+        asyncio.run(_wait_for_database(url, arguments.timeout))
         upgrade_database(url, lock_timeout=int(arguments.timeout))
+
+
+async def _wait_for_database(url: str, seconds: float) -> None:
+    try:
+        async with asyncio.timeout(seconds):
+            await wait_for_database(url)
+    except TimeoutError:
+        sys.exit(f"the database is still not reachable after {seconds:.0f} s")
 
 
 async def _wait_for_schema(url: str, seconds: float) -> None:

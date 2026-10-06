@@ -34,9 +34,16 @@ def test_run_api_starts_uvicorn_with_the_settings(monkeypatch: pytest.MonkeyPatc
 
 
 def test_run_migrations_upgrades_the_configured_database(monkeypatch: pytest.MonkeyPatch) -> None:
-    upgraded: list[tuple[str, int]] = []
+    steps: list[tuple[str, str, int | None]] = []
+
+    async def wait_for_database(url: str) -> None:
+        steps.append(("waited", url, None))
+
+    monkeypatch.setattr(main, "wait_for_database", wait_for_database)
     monkeypatch.setattr(
-        main, "upgrade_database", lambda url, lock_timeout: upgraded.append((url, lock_timeout))
+        main,
+        "upgrade_database",
+        lambda url, lock_timeout: steps.append(("upgraded", url, lock_timeout)),
     )
     monkeypatch.setattr(main, "configure_logging", lambda _level: None)
     monkeypatch.setenv("DATABASE_URL", "mysql+aiomysql://app:secret@db:3306/reviews")
@@ -44,10 +51,31 @@ def test_run_migrations_upgrades_the_configured_database(monkeypatch: pytest.Mon
     main.run_migrations([])
     main.run_migrations(["--timeout", "30"])
 
-    assert upgraded == [
-        ("mysql+aiomysql://app:secret@db:3306/reviews", 600),
-        ("mysql+aiomysql://app:secret@db:3306/reviews", 30),
+    url = "mysql+aiomysql://app:secret@db:3306/reviews"
+    assert steps == [
+        ("waited", url, None),
+        ("upgraded", url, 600),
+        ("waited", url, None),
+        ("upgraded", url, 30),
     ]
+
+
+def test_migrating_gives_up_when_the_database_never_answers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def never_reachable(_url: str) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(main, "wait_for_database", never_reachable)
+    monkeypatch.setattr(
+        main,
+        "upgrade_database",
+        lambda *_args, **_kwargs: pytest.fail("migrated without a database"),
+    )
+    monkeypatch.setattr(main, "configure_logging", lambda _level: None)
+
+    with pytest.raises(SystemExit, match="still not reachable after 0 s"):
+        main.run_migrations(["--timeout", "0.05"])
 
 
 def test_run_migrations_can_wait_for_the_schema_instead(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -66,6 +66,9 @@ The design follows from that:
 - **One migration at a time.** `bookreviews-migrate` holds a MariaDB named lock while it runs, so
   two copies started together (two deploys, a retried job) run one after the other; the second
   finds nothing left to do. It gives up after waiting 10 minutes.
+- **Waiting for the database.** Before migrating, `bookreviews-migrate` waits until MariaDB accepts
+  connections, for up to 10 minutes as well, and logs `database not reachable yet` meanwhile. On a
+  fresh cluster the Job starts together with the database.
 - **Review IDs.** IDs are UUIDv7. They cannot be guessed, the API creates them without a round trip
   to the database, and they are time-ordered, so inserts append to the InnoDB index. They are
   stored in MariaDB's native `UUID` type.

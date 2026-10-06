@@ -28,6 +28,22 @@ def upgrade_database(database_url: str, lock_timeout: int = MIGRATION_LOCK_TIMEO
     command.upgrade(config, "head")
 
 
+async def wait_for_database(database_url: str, interval: float = 2) -> None:
+    engine = create_async_engine(database_url, connect_args={"connect_timeout": CONNECT_TIMEOUT})
+    try:
+        while True:
+            try:
+                async with engine.connect():
+                    return
+            except (SQLAlchemyError, OSError) as exc:
+                logger.info(
+                    "database not reachable yet", extra={"error": f"{type(exc).__name__}: {exc}"}
+                )
+            await asyncio.sleep(interval)
+    finally:
+        await engine.dispose()
+
+
 def newer_than_release(scripts: ScriptDirectory, revision: str | None) -> bool:
     return revision is not None and all(s.revision != revision for s in scripts.walk_revisions())
 

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from bookreviews.adapters.database.schema import (
     migrations_config,
     upgrade_database,
+    wait_for_database,
     wait_for_schema,
 )
 from tests.conftest import LogRecords
@@ -86,6 +87,21 @@ def test_one_migration_runs_at_a_time(database_url: str) -> None:
 
     upgrade_database(database_url, lock_timeout=1)
     assert run_sql(database_url, "SELECT IS_FREE_LOCK(:lock)", lock=lock) == [1]
+
+
+def test_waiting_for_the_database(database_url: str, json_logs: LogRecords) -> None:
+    closed_port = make_url(database_url).set(port=9).render_as_string(hide_password=False)
+
+    async def wait_for_both() -> None:
+        await asyncio.wait_for(wait_for_database(database_url, interval=0.1), timeout=10)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(wait_for_database(closed_port, interval=0.1), timeout=5)
+
+    asyncio.run(wait_for_both())
+
+    messages = [r["msg"] for r in json_logs() if r["logger"] == "bookreviews.database"]
+    assert messages
+    assert set(messages) == {"database not reachable yet"}
 
 
 def test_waiting_for_the_schema(database_url: str, json_logs: LogRecords) -> None:
