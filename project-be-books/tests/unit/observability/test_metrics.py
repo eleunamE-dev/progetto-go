@@ -9,7 +9,9 @@ from fastapi import FastAPI
 
 from bookreviews.adapters.catalog import CachedCatalog, ResilienceOptions, ResilientCatalog
 from bookreviews.adapters.queue import RabbitQueue, Topology
+from bookreviews.api.app import create_app
 from bookreviews.api.dependencies import get_catalog, get_review_queue, get_review_repository
+from bookreviews.config import Settings
 from bookreviews.core.catalog import (
     Book,
     BookNotFoundError,
@@ -74,6 +76,37 @@ async def test_http_requests_are_counted_by_route_template(
         == unmatched + 1
     )
     assert sample("bookreviews_http_request_duration_seconds_count", **route) == timed + 2
+
+
+async def test_requests_answered_before_routing_are_counted_by_route_template() -> None:
+    settings = Settings(cors_allow_origins=["https://reviews.example.com"])
+    preflight = {
+        "Origin": "https://reviews.example.com",
+        "Access-Control-Request-Method": "POST",
+    }
+    counted = [
+        ("GET", "/docs", "200"),
+        ("GET", "/openapi.json", "200"),
+        ("OPTIONS", "/review", "200"),
+        ("POST", "/review", "413"),
+    ]
+    before = [
+        sample("bookreviews_http_requests_total", method=m, route=r, status=s)
+        for m, r, s in counted
+    ]
+
+    transport = httpx.ASGITransport(app=create_app(settings))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.get("/docs")
+        await client.get("/openapi.json")
+        await client.options("/review", headers=preflight)
+        await client.post("/review", content=b"x" * (settings.http_max_body_size + 1))
+
+    after = [
+        sample("bookreviews_http_requests_total", method=m, route=r, status=s)
+        for m, r, s in counted
+    ]
+    assert after == [value + 1 for value in before]
 
 
 @pytest.mark.parametrize(

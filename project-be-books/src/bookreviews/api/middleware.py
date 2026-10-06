@@ -4,8 +4,10 @@ import time
 import uuid
 from http import HTTPStatus
 
+from fastapi.routing import iter_route_contexts
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.exceptions import HTTPException
+from starlette.routing import Match
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from bookreviews.api.problems import problem_response
@@ -18,6 +20,21 @@ CONTENT_SECURITY_POLICY = "default-src 'none'; frame-ancestors 'none'"
 _VALID_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
 logger = logging.getLogger("bookreviews.http")
+
+
+def _route_template(scope: Scope) -> str:
+    route = scope.get("route")
+    if route is None:
+        route = next(
+            (
+                context
+                for context in iter_route_contexts(scope["app"].routes)
+                if context.matches(scope)[0] is not Match.NONE
+            ),
+            None,
+        )
+    template: str = getattr(route, "path", None) or "unmatched"
+    return template
 
 
 class RequestContextMiddleware:
@@ -56,7 +73,7 @@ class RequestContextMiddleware:
             await response(scope, receive, send_with_request_id)
         finally:
             duration = time.perf_counter() - start
-            route = getattr(scope.get("route"), "path", "unmatched")
+            route = _route_template(scope)
             metrics.http_requests.labels(scope["method"], route, str(status)).inc()
             metrics.http_request_duration.labels(scope["method"], route).observe(duration)
             logger.log(
