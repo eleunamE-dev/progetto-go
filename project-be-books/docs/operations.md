@@ -32,6 +32,11 @@ as 9100 and 9101 by Compose), never on the public port of the API. Besides the p
 | `bookreviews_sweeper_actions_total` | `action` | `requeued`, `expired`, `keys_forgotten` |
 | `bookreviews_pending_reviews`, `bookreviews_oldest_pending_review_age_seconds` | | the backlog, measured by the worker at every sweep |
 
+Apart from the HTTP ones, the labelled counters start at 0 for every known label value when the
+process starts. Prometheus computes `rate()` and `increase()` from the difference between two
+samples, so a series that appeared directly at 1 would hide its first event: the first parked
+message would not trigger its alert.
+
 **Worker health.** The worker answers `GET /healthz` on port 9100 from its event loop, so a worker
 whose loop is stuck fails the check. Compose uses it as the worker's healthcheck.
 

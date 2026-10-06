@@ -113,6 +113,8 @@ class RabbitQueue:
     def __init__(self, url: str, topology: Topology | None = None) -> None:
         self._url = url
         self._topology = topology or Topology()
+        for queue in (self._topology.queue, self._topology.parking_queue):
+            metrics.queue_publish_failures.labels(queue)
         self._connection: AbstractRobustConnection | None = None
         self._channel: AbstractChannel | None = None
         self._lock = asyncio.Lock()
