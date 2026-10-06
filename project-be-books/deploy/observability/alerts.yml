@@ -47,13 +47,13 @@ groups:
           runbook_url: https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#bookreviewsslowrequests
 
       - alert: BookReviewsCatalogSuspended
-        expr: max(bookreviews_catalog_circuit_open) == 1
+        expr: sum(rate(bookreviews_catalog_rejections_total{reason="circuit_open"}[5m])) > 0
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: Calls to Gutendex are suspended
-          description: The circuit breaker has been open for 5 minutes. Searches and reviews of books not in the cache answer 503.
+          description: For 5 minutes the circuit breaker has refused calls to Gutendex after repeated failures. Searches and reviews of books not in the cache answer 503, and enrichments wait.
           runbook_url: https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#bookreviewscatalogsuspended
 
       - alert: BookReviewsEnrichmentBacklog

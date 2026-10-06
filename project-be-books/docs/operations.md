@@ -23,7 +23,7 @@ as 9100 and 9101 by Compose), never on the public port of the API. Besides the p
 | `bookreviews_catalog_requests_total` | `operation`, `outcome` | calls to Gutendex: `ok`, `not_found`, `timeout`, `unavailable`, `error` |
 | `bookreviews_catalog_request_duration_seconds` | `operation` | histogram, up to 60 s |
 | `bookreviews_catalog_rejections_total` | `reason` | calls refused by the circuit breaker (`circuit_open`) or the concurrency limit (`busy`) |
-| `bookreviews_catalog_circuit_open` | | 1 while calls to Gutendex are suspended |
+| `bookreviews_catalog_circuit_open` | | 1 from the opening of the circuit until a call to Gutendex succeeds again |
 | `bookreviews_catalog_cache_lookups_total` | `result` | `hit`, `miss` |
 | `bookreviews_reviews_submitted_total` | `result` | `created`, or `replayed` for a repeated `Idempotency-Key` |
 | `bookreviews_queue_publish_failures_total` | `queue` | messages RabbitMQ didn't accept |
@@ -41,7 +41,7 @@ rules:
   no target to scrape at all;
 - more than 5% of the requests answering 5xx;
 - slow review requests;
-- calls to Gutendex suspended for 5 minutes;
+- calls to Gutendex refused by the circuit breaker for 5 minutes;
 - reviews pending for more than 30 minutes;
 - parked messages;
 - RabbitMQ refusing messages.
