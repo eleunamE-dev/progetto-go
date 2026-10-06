@@ -3,6 +3,7 @@
 How to release, roll back and look after the book review service in production, and what to do
 when an alert fires. The commands assume the production overlay in the `bookreviews` namespace;
 with Docker Compose, `docker compose exec worker …` replaces `kubectl exec deploy/bookreviews-worker …`.
+Besides `kubectl`, releases need `kustomize` and the log queries and key changes need `jq`.
 
 - [At a glance](#at-a-glance)
 - [Releasing](#releasing)

@@ -8,7 +8,7 @@ KUBECONFORM = docker run --rm -i ghcr.io/yannh/kubeconform:v0.8.0 -strict -summa
 
 .PHONY: help
 help: ## List the available targets
-	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 .PHONY: install
 install: ## Create the virtual environment with every dependency
