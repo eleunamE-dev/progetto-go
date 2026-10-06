@@ -57,6 +57,7 @@ async def test_validation_errors_list_the_invalid_fields(client: httpx.AsyncClie
     body = response.json()
     assert body["title"] == "Unprocessable Content"
     assert body["detail"] == "the request is not valid"
+    assert body["instance"] == "/items/abc"
     assert body["errors"] == [
         {
             "field": "path.item_id",
@@ -107,6 +108,7 @@ async def test_database_outages_ask_to_retry_later(
     assert response.headers["retry-after"] == "5"
     assert response.headers["content-type"] == "application/problem+json"
     assert response.json()["detail"] == "the database is not available, try again later"
+    assert response.json()["instance"] == "/database"
     assert "SELECT" not in response.text
     [record] = [r for r in json_logs() if r["msg"] == "database unavailable"]
     assert record["level"] == "ERROR"

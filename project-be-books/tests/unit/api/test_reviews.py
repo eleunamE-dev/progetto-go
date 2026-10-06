@@ -187,6 +187,7 @@ async def test_submit_when_the_catalog_does_not_answer(
     response = await client.post("/review", json=VALID)
 
     assert response.status_code == 504
+    assert response.json()["instance"] == "/review"
     assert repository.reviews == {}
 
 
@@ -199,6 +200,7 @@ async def test_submit_while_the_catalog_is_suspended(
 
     assert response.status_code == 503
     assert response.headers["retry-after"] == "20"
+    assert response.json()["instance"] == "/review"
     assert repository.reviews == {}
 
 
@@ -208,14 +210,16 @@ async def test_reviews_are_unavailable_while_the_database_is_down(
     engine = create_engine("mysql+aiomysql://user:password@127.0.0.1:9/bookreviews")
     repository = SqlReviewRepository(create_sessions(engine))
     app.dependency_overrides[get_review_repository] = lambda: repository
+    location = f"/review/{uuid.uuid7()}"
     try:
-        response = await client.get(f"/review/{uuid.uuid7()}")
+        response = await client.get(location)
     finally:
         await engine.dispose()
 
     assert response.status_code == 503
     assert response.headers["retry-after"] == "5"
     assert response.json()["detail"] == "the database is not available, try again later"
+    assert response.json()["instance"] == location
 
 
 async def test_get_pending_review(
@@ -286,6 +290,7 @@ async def test_get_unknown_review(client: httpx.AsyncClient) -> None:
     assert response.status_code == 404
     assert response.headers["content-type"] == "application/problem+json"
     assert response.json()["detail"] == f"no review with id {review_id}"
+    assert response.json()["instance"] == f"/review/{review_id}"
 
 
 async def test_review_ids_must_be_uuids(client: httpx.AsyncClient) -> None:
@@ -407,6 +412,7 @@ async def test_only_the_owner_changes_a_review(
         assert response.status_code == 403
         assert response.headers["content-type"] == "application/problem+json"
         assert response.json()["detail"] == f"review {review.id} belongs to another client"
+        assert response.json()["instance"] == f"/review/{review.id}"
     assert repository.reviews == {review.id: review}
 
 
@@ -547,6 +553,7 @@ async def test_if_match_protects_updates_and_deletes(
         assert refused.json()["detail"] == (
             f"review {review.id} has changed, read it again to get its current ETag"
         )
+        assert refused.json()["instance"] == location
     assert updated.status_code == 200
     assert deleted.status_code == 204
     assert repository.reviews == {}
@@ -601,6 +608,8 @@ async def test_an_idempotency_key_reused_for_another_request(
     )
 
     assert response.status_code == 422
+    assert response.json()["detail"] == "the request is not valid"
+    assert response.json()["instance"] == "/review"
     assert response.json()["errors"] == [
         {
             "field": "header.Idempotency-Key",

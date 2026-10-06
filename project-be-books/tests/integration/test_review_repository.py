@@ -1,3 +1,5 @@
+import asyncio
+import threading
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
@@ -7,6 +9,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from bookreviews.adapters.database.connections import create_engine, create_sessions
 from bookreviews.adapters.database.repository import SqlReviewRepository
 from bookreviews.core.catalog import Book, Person
 from bookreviews.core.reviews import (
@@ -193,8 +196,8 @@ async def test_fail(repository: SqlReviewRepository) -> None:
 
 
 async def test_stale_pending_reviews(repository: SqlReviewRepository) -> None:
-    oldest = new_review(created_at=CREATED_AT - timedelta(hours=2))
     older = new_review(created_at=CREATED_AT - timedelta(hours=1))
+    oldest = new_review(created_at=CREATED_AT - timedelta(hours=2))
     recent = new_review(created_at=CREATED_AT)
     completed = new_review(created_at=CREATED_AT - timedelta(hours=3))
     for review in (recent, older, completed, oldest):
@@ -233,9 +236,9 @@ async def test_expire_pending_reviews(repository: SqlReviewRepository) -> None:
 
 
 async def test_failed_reviews(repository: SqlReviewRepository) -> None:
-    oldest = new_review(created_at=CREATED_AT - timedelta(days=3), status=ReviewStatus.FAILED)
-    older = new_review(created_at=CREATED_AT - timedelta(days=2), status=ReviewStatus.FAILED)
     recent = new_review(created_at=CREATED_AT, status=ReviewStatus.FAILED)
+    older = new_review(created_at=CREATED_AT - timedelta(days=2), status=ReviewStatus.FAILED)
+    oldest = new_review(created_at=CREATED_AT - timedelta(days=3), status=ReviewStatus.FAILED)
     pending = new_review(created_at=CREATED_AT - timedelta(days=2))
     for review in (recent, pending, older, oldest):
         await repository.add(review)
@@ -323,3 +326,87 @@ async def test_forget_idempotency_keys(repository: SqlReviewRepository) -> None:
     assert await repository.find_by_idempotency_key("tests", "old") is None
     assert await repository.find_by_idempotency_key("tests", "recent") == (recent, "b" * 64)
     assert await repository.get(old.id) == old
+
+
+async def test_update_and_replay_return_the_book_data(repository: SqlReviewRepository) -> None:
+    review = new_review()
+    await repository.add(review, IdempotencyKey("tests", "with-book", "a" * 64))
+    await repository.complete(review.id, PRIDE_AND_PREJUDICE, CREATED_AT)
+
+    updated = await repository.update(review.id, content="Changed.", score=1, updated_at=CREATED_AT)
+    replayed = await repository.find_by_idempotency_key("tests", "with-book")
+
+    assert updated is not None
+    assert updated.book == PRIDE_AND_PREJUDICE
+    assert replayed == (updated, "a" * 64)
+
+
+async def test_pending_summary(repository: SqlReviewRepository) -> None:
+    assert await repository.pending_summary() == (0, None)
+    newer = new_review(created_at=CREATED_AT - timedelta(hours=1))
+    oldest = new_review(created_at=CREATED_AT - timedelta(hours=2))
+    done = new_review(created_at=CREATED_AT - timedelta(hours=3))
+    for review in (newer, oldest, done):
+        await repository.add(review)
+    await repository.complete(done.id, PRIDE_AND_PREJUDICE, CREATED_AT)
+
+    assert await repository.pending_summary() == (2, oldest.created_at)
+
+
+@pytest.mark.parametrize("operation", ["update", "delete"])
+@pytest.mark.parametrize("same_review", [True, False], ids=["same review", "same book"])
+async def test_a_conditional_write_holds_its_rows_until_it_commits(
+    repository: SqlReviewRepository, database_url: str, operation: str, same_review: bool
+) -> None:
+    seed, target, other = new_review(), new_review(), new_review()
+    for review in (seed, target, other):
+        await repository.add(review)
+    await repository.complete(seed.id, PRIDE_AND_PREJUDICE, CREATED_AT)
+    refreshed = replace(PRIDE_AND_PREJUDICE, title="Pride and Prejudice, refreshed")
+    finished = threading.Event()
+
+    def complete_concurrently() -> None:
+        async def complete() -> None:
+            engine = create_engine(database_url)
+            try:
+                writer = SqlReviewRepository(create_sessions(engine))
+                await writer.complete(target.id if same_review else other.id, refreshed, CREATED_AT)
+            finally:
+                await engine.dispose()
+
+        asyncio.run(complete())
+        finished.set()
+
+    writer = threading.Thread(target=complete_concurrently)
+    waited: list[bool] = []
+
+    def condition(_review: Review) -> bool:
+        writer.start()
+        waited.append(not finished.wait(timeout=1))
+        return True
+
+    if operation == "update":
+        changed = await repository.update(
+            target.id, content="Changed.", score=1, updated_at=CREATED_AT, condition=condition
+        )
+        assert changed is not None
+    else:
+        assert await repository.delete(target.id, condition=condition)
+    await asyncio.to_thread(writer.join, 10)
+
+    assert waited == [True]
+    current = await repository.get(target.id)
+    if operation == "delete":
+        assert current is None
+    elif same_review:
+        assert current is not None
+        assert (current.content, current.status, current.version) == (
+            "Changed.",
+            ReviewStatus.COMPLETED,
+            3,
+        )
+    else:
+        completed = await repository.get(other.id)
+        assert current is not None
+        assert completed is not None
+        assert (current.content, completed.book) == ("Changed.", refreshed)

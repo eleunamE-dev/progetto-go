@@ -248,3 +248,104 @@ async def test_old_inflight_results_do_not_change_an_open_circuit(
     with pytest.raises(CatalogCircuitOpenError) as error:
         await catalog.get_book(3)
     assert error.value.retry_after == 20
+
+
+async def test_searches_reach_the_catalog_with_their_page(
+    catalog: ResilientCatalog, inner: FakeCatalog
+) -> None:
+    await catalog.search("austen")
+    await catalog.search("austen", page=2)
+
+    assert inner.searches == [("austen", 1), ("austen", 2)]
+
+
+async def test_a_not_found_answer_resets_the_failure_count(
+    catalog: ResilientCatalog, inner: FakeCatalog
+) -> None:
+    inner.error = CatalogTimeoutError("timed out")
+    await fail(catalog, OPTIONS.failure_threshold - 1)
+    inner.error = None
+    with pytest.raises(BookNotFoundError):
+        await catalog.get_book(999)
+    inner.error = CatalogTimeoutError("timed out")
+
+    await fail(catalog, OPTIONS.failure_threshold - 1)
+
+    assert not catalog.is_open
+
+
+async def test_a_probe_answered_not_found_closes_the_circuit(
+    catalog: ResilientCatalog, inner: FakeCatalog, clock: Clock
+) -> None:
+    inner.error = CatalogTimeoutError("timed out")
+    await fail(catalog, OPTIONS.failure_threshold)
+    clock.now += OPTIONS.reset_timeout
+    inner.error = None
+
+    with pytest.raises(BookNotFoundError):
+        await catalog.get_book(999)
+
+    assert not catalog.is_open
+
+
+async def test_calls_are_refused_until_the_end_of_the_suspension(
+    catalog: ResilientCatalog, inner: FakeCatalog, clock: Clock
+) -> None:
+    inner.error = CatalogTimeoutError("timed out")
+    await fail(catalog, OPTIONS.failure_threshold)
+    clock.now += OPTIONS.reset_timeout - 0.5
+    inner.error = None
+
+    with pytest.raises(CatalogCircuitOpenError) as excinfo:
+        await catalog.get_book(1342)
+
+    assert excinfo.value.retry_after == 1
+
+
+async def test_the_circuit_opens_and_recovers_more_than_once(
+    catalog: ResilientCatalog, inner: FakeCatalog, clock: Clock
+) -> None:
+    for _ in range(2):
+        inner.error = CatalogTimeoutError("timed out")
+        await fail(catalog, OPTIONS.failure_threshold)
+        assert catalog.is_open
+        clock.now += OPTIONS.reset_timeout
+        inner.error = None
+
+        assert await catalog.get_book(1342) == PRIDE_AND_PREJUDICE
+        assert not catalog.is_open
+
+
+async def test_old_inflight_results_are_ignored_after_a_second_opening(clock: Clock) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    @dataclass
+    class Source(FakeCatalog):
+        healthy: bool = False
+
+        async def get_book(self, book_id: int) -> Book:
+            if book_id == 1:
+                started.set()
+                await release.wait()
+                return PRIDE_AND_PREJUDICE
+            if self.healthy:
+                return PRIDE_AND_PREJUDICE
+            raise CatalogTimeoutError("unavailable")
+
+    source = Source()
+    catalog = ResilientCatalog(source, ResilienceOptions(failure_threshold=1), clock)
+    with pytest.raises(CatalogTimeoutError):
+        await catalog.get_book(2)
+    clock.now += 30
+    source.healthy = True
+    await catalog.get_book(2)
+    old = asyncio.create_task(catalog.get_book(1))
+    await started.wait()
+    source.healthy = False
+    with pytest.raises(CatalogTimeoutError):
+        await catalog.get_book(2)
+
+    release.set()
+    assert await old == PRIDE_AND_PREJUDICE
+    assert catalog.is_open

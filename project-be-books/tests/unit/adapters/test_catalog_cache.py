@@ -42,8 +42,9 @@ def cache(inner: FakeCatalog, clock: Clock) -> CachedCatalog:
 async def test_search_is_not_cached(cache: CachedCatalog, inner: FakeCatalog) -> None:
     await cache.search("austen")
     await cache.search("austen")
+    await cache.search("austen", page=2)
 
-    assert inner.searches == [("austen", 1), ("austen", 1)]
+    assert inner.searches == [("austen", 1), ("austen", 1), ("austen", 2)]
 
 
 async def test_books_found_by_a_search_need_no_lookup(

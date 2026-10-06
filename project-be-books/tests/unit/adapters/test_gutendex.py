@@ -63,13 +63,16 @@ async def test_search_sends_a_normalized_query(
     assert request.headers["user-agent"].startswith("bookreviews")
 
 
-async def test_search_requests_later_pages(client: GutendexClient, gutendex: FakeGutendex) -> None:
+@pytest.mark.parametrize("page", [2, 3])
+async def test_search_requests_later_pages(
+    client: GutendexClient, gutendex: FakeGutendex, page: int
+) -> None:
     gutendex.body = fixture("search_first_page.json")
 
-    await client.search("dickens", page=3)
+    await client.search("dickens", page=page)
 
     [request] = gutendex.requests
-    assert str(request.url) == "https://gutendex.test/books/?page=3&search=dickens"
+    assert str(request.url) == f"https://gutendex.test/books/?page={page}&search=dickens"
 
 
 async def test_search_maps_the_results(client: GutendexClient, gutendex: FakeGutendex) -> None:
@@ -201,6 +204,25 @@ async def test_connection_error(client: GutendexClient, gutendex: FakeGutendex) 
         await client.search("dickens")
 
     assert not isinstance(excinfo.value, CatalogTimeoutError)
+
+
+@pytest.mark.parametrize(("seconds", "connect"), [(60, 5), (2, 2)])
+async def test_requests_wait_at_most_5_s_for_the_connection(
+    gutendex: FakeGutendex, seconds: float, connect: float
+) -> None:
+    gutendex.body = fixture("search_first_page.json")
+    transport = httpx.MockTransport(gutendex.handle)
+
+    async with GutendexClient("https://gutendex.test", seconds, transport=transport) as client:
+        await client.search("dickens")
+
+    [request] = gutendex.requests
+    assert request.extensions["timeout"] == {
+        "connect": connect,
+        "read": seconds,
+        "write": seconds,
+        "pool": seconds,
+    }
 
 
 async def test_close() -> None:

@@ -92,3 +92,24 @@ async def test_a_dry_run_only_lists_the_reviews(
     assert summary == f"{review.id}\n1 failed reviews would be retried"
     assert catalog.book_requests == []
     assert await repository.get(review.id) == review
+
+
+async def test_retry_failed_stops_at_until_and_limit(
+    settings: Settings, repository: SqlReviewRepository, catalog: FakeCatalog
+) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    oldest, older, recent = (failed_review(1342, now - timedelta(days=days)) for days in (3, 2, 1))
+    for review in (recent, older, oldest):
+        await repository.add(review)
+
+    limited = await admin.retry_failed(settings, arguments(limit=1))
+    until = await admin.retry_failed(settings, arguments(until=now - timedelta(days=1)))
+
+    assert limited.startswith("1 failed reviews retried: 1 completed")
+    assert until.startswith("1 failed reviews retried: 1 completed")
+    statuses = [await repository.get(review.id) for review in (oldest, older, recent)]
+    assert [review.status for review in statuses if review is not None] == [
+        ReviewStatus.COMPLETED,
+        ReviewStatus.COMPLETED,
+        ReviewStatus.FAILED,
+    ]

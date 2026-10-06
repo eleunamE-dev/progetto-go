@@ -55,21 +55,36 @@ def test_tracing_is_set_up_and_flushed_on_exit(monkeypatch: pytest.MonkeyPatch) 
     assert provider.shut_down
 
 
-def test_setup_tracing_installs_the_instrumentations(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("variable", "service"), [(None, "bookreviews-api"), ("reviews-eu", "reviews-eu")]
+)
+def test_setup_tracing_installs_the_instrumentations(
+    monkeypatch: pytest.MonkeyPatch, variable: str | None, service: str
+) -> None:
     instrumented: list[str] = []
+    installed: list[object] = []
     monkeypatch.setattr(
         HTTPXClientInstrumentor, "instrument", lambda _self: instrumented.append("httpx")
     )
     monkeypatch.setattr(
         AioPikaInstrumentor, "instrument", lambda _self: instrumented.append("aio-pika")
     )
-    monkeypatch.setattr(trace, "set_tracer_provider", lambda _provider: None)
-    monkeypatch.setenv("OTEL_SERVICE_NAME", "reviews-eu")
+    monkeypatch.setattr(trace, "set_tracer_provider", installed.append)
+    if variable is None:
+        monkeypatch.delenv("OTEL_SERVICE_NAME", raising=False)
+    else:
+        monkeypatch.setenv("OTEL_SERVICE_NAME", variable)
+    exporter = InMemorySpanExporter()
 
-    provider = telemetry.setup_tracing("bookreviews-api", InMemorySpanExporter())
+    provider = telemetry.setup_tracing("bookreviews-api", exporter)
+    with provider.get_tracer("tests").start_as_current_span("work"):
+        pass
+    provider.force_flush()
 
     assert instrumented == ["httpx", "aio-pika"]
-    assert provider.resource.attributes["service.name"] == "reviews-eu"
+    assert installed == [provider]
+    assert provider.resource.attributes["service.name"] == service
+    assert [span.name for span in exporter.get_finished_spans()] == ["work"]
     provider.shutdown()
 
 
