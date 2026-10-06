@@ -15,9 +15,20 @@ spec:
       labels:
         app.kubernetes.io/name: mariadb
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: mariadb
           image: mariadb:12.3.2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: MARIADB_ROOT_PASSWORD
               valueFrom:
