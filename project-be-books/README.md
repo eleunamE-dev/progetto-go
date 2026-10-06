@@ -380,8 +380,9 @@ services and the integration tests. `make` lists the tasks; these are the comman
   stack uses the same ports as `make up`, so stop that first. Gutendex is live: the few checks that
   depend on it are skipped when it times out.
 
-**Migrations.** With the database running, `uv run alembic revision --autogenerate -m "what changes"`
-writes a new migration from the models; review it before committing.
+**Migrations.** With the database running,
+`uv run alembic revision --autogenerate --rev-id 0005 -m "what changes"` writes the next migration
+from the models, numbered after the last one and formatted by ruff; review it before committing.
 
 **Database accounts.** [deploy/mariadb/users.sql](deploy/mariadb/users.sql) creates them the first
 time the volume is initialised. On a volume created before that script existed, apply it once:
