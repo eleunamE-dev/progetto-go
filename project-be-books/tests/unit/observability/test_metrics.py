@@ -1,4 +1,6 @@
 import asyncio
+import subprocess
+import sys
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -278,3 +280,26 @@ async def test_the_sweeper_reports_its_work_and_the_backlog() -> None:
 
     assert sample("bookreviews_pending_reviews") == 0
     assert sample("bookreviews_oldest_pending_review_age_seconds") == 0
+
+
+def test_counters_start_at_zero_so_that_the_first_event_counts() -> None:
+    script = (
+        "from prometheus_client import generate_latest\n"
+        "from bookreviews.adapters.queue import RabbitQueue\n"
+        "RabbitQueue('amqp://user:password@127.0.0.1:9/')\n"
+        "print(generate_latest().decode())\n"
+    )
+    exported = subprocess.run(  # noqa: S603 - a fresh interpreter, whose registry no test has used
+        [sys.executable, "-c", script], capture_output=True, text=True, check=True
+    ).stdout
+
+    for series in (
+        'bookreviews_enrichments_total{outcome="parked"} 0.0',
+        'bookreviews_queue_publish_failures_total{queue="review.enrichment"} 0.0',
+        'bookreviews_queue_publish_failures_total{queue="review.enrichment.parked"} 0.0',
+        'bookreviews_catalog_rejections_total{reason="circuit_open"} 0.0',
+        'bookreviews_catalog_requests_total{operation="get_book",outcome="timeout"} 0.0',
+        'bookreviews_sweeper_actions_total{action="requeued"} 0.0',
+        'bookreviews_reviews_submitted_total{result="created"} 0.0',
+    ):
+        assert series in exported
