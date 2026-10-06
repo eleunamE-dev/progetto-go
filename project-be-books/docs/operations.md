@@ -18,7 +18,7 @@ as 9100 and 9101 by Compose), never on the public port of the API. Besides the p
 
 | Metric | Labels | |
 |---|---|---|
-| `bookreviews_http_requests_total` | `method`, `route`, `status` | requests answered; `route` is the template, such as `/review/{review_id}`, so the series stay few |
+| `bookreviews_http_requests_total` | `method`, `route`, `status` | requests answered; `route` is the template, such as `/review/{review_id}`, so the series stay few, and `unmatched` for paths the API doesn't serve |
 | `bookreviews_http_request_duration_seconds` | `method`, `route` | histogram |
 | `bookreviews_catalog_requests_total` | `operation`, `outcome` | calls to Gutendex: `ok`, `not_found`, `timeout`, `unavailable`, `error` |
 | `bookreviews_catalog_request_duration_seconds` | `operation` | histogram, up to 60 s |
