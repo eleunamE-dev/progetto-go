@@ -88,8 +88,8 @@ tests:
 
   - interval: 1m
     input_series:
-      - series: 'bookreviews_catalog_circuit_open{job="bookreviews-api", instance="api:9100"}'
-        values: "0 1 1 1 1 1 1 1"
+      - series: 'bookreviews_catalog_rejections_total{job="bookreviews-api", instance="api:9100", reason="circuit_open"}'
+        values: "0+4x15"
     alert_rule_test:
       - eval_time: 4m
         alertname: BookReviewsCatalogSuspended
@@ -101,8 +101,22 @@ tests:
               severity: warning
             exp_annotations:
               summary: Calls to Gutendex are suspended
-              description: The circuit breaker has been open for 5 minutes. Searches and reviews of books not in the cache answer 503.
+              description: For 5 minutes the circuit breaker has refused calls to Gutendex after repeated failures. Searches and reviews of books not in the cache answer 503, and enrichments wait.
               runbook_url: https://github.com/eleunamE-dev/progetto-go/blob/main/project-be-books/docs/runbook.md#bookreviewscatalogsuspended
+
+  - interval: 1m
+    input_series:
+      - series: 'bookreviews_catalog_circuit_open{job="bookreviews-api", instance="api:9100"}'
+        values: "0 1x30"
+      - series: 'bookreviews_catalog_rejections_total{job="bookreviews-api", instance="api:9100", reason="circuit_open"}'
+        values: "0 3x30"
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: BookReviewsCatalogSuspended
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: BookReviewsCatalogSuspended
+        exp_alerts: []
 
   - interval: 1m
     input_series:

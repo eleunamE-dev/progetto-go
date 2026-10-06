@@ -369,7 +369,7 @@
     {
       "type": "stat",
       "title": "Circuit breaker",
-      "description": "Open while calls to Gutendex are suspended after repeated failures.",
+      "description": "Open from repeated failures until a call to Gutendex succeeds again. Calls are refused for 30 s, then the next one tries Gutendex.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"

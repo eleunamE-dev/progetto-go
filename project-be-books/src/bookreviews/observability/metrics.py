@@ -55,7 +55,7 @@ catalog_rejections = _from_zero(
 )
 catalog_circuit_open = Gauge(
     "bookreviews_catalog_circuit_open",
-    "1 while calls to the book catalog are suspended after repeated failures",
+    "1 from the opening of the circuit until a call to the book catalog succeeds again",
 )
 catalog_cache_lookups = _from_zero(
     Counter(

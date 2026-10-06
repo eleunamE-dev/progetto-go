@@ -164,9 +164,10 @@ The 95th percentile of a `/review` route has been above 2 s for 10 minutes.
 
 ### BookReviewsCatalogSuspended
 
-The circuit breaker has kept calls to Gutendex suspended for 5 minutes: Gutendex failed 5 times in
-a row, and every probe since has failed too. Searches and submissions of books not in the cache
-answer 503.
+For 5 minutes the circuit breaker has refused calls to Gutendex: Gutendex failed 5 times in a
+row, and every probe since has failed too. Searches and submissions of books not in the cache
+answer 503, and enrichments wait. The alert counts refused calls rather than the state of the
+circuit: when nobody calls, the circuit stays open until the next call, and nobody is affected.
 
 ```bash
 curl -sS -o /dev/null -w '%{http_code} in %{time_total} s\n' https://gutendex.com/books/1342/
