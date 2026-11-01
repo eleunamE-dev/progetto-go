@@ -9,7 +9,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
 
   prometheus:
-    image: prom/prometheus:v3.15.0
+    image: prom/prometheus:v3.15.1
     ports:
       - "127.0.0.1:9090:9090"
     volumes:
